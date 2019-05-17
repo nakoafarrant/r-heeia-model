@@ -1,0 +1,324 @@
+---
+title: "He’eia Model - Stream PFR"
+author: "Nakoa Farrant"
+date: "5/7/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(deSolve)
+library(tidyverse)
+library(ggplot2)
+```
+
+# He'eia Stream as PFR, 6-Hour Time Step
+Model Equations
+```{r}
+fish_func_pfr_6 <- function(t, state, pars) {
+  with(as.list(c(state6, pars6)), {
+
+    # define physical parameters of ecosystem 
+    h_st = 0.5 # average depth of stream [m]
+    l_st = 700 # length of interest for He‘eia Stream [m]
+    w_st = 15 # approximate width of stream [m]
+    
+    A_fp = 360000 # approximate area of fishpond [m^2]
+    h_fp = 0.4 # average depth of fishpond water column [m]
+    
+    A_sed = 360000 # approximate area of sediment [m^2]
+    h_sed = 0.005 # depth of sediment of interest in meters [m]
+    
+    # define volumes of compartments - m^3
+    V_st = h_st*l_st*w_st # stream
+    V_fp = A_fp*h_fp # fishpond water
+    V_sed = A_sed*h_sed # fishpond sediment
+    
+    # temperature in ºC
+    T_max = 35.2 # maximum in the summer
+    T_min = 20.5 # minimum in the winter
+    T1 = (T_max - T_min)/2 * (sin(2*pi*t - pi/2) + 1) + T_min
+    
+    k_fd = (0.0256 + 0.0123*T1)/4 # fish mortality rate [1/6hr]
+    
+    # define flow terms
+    Q_st = 3500 # average He‘eia stream flow conditions
+    
+    # Tidal exchange
+    # Tide cycles in Hawai'i are mixed such that there are two tide cycles in a 24 hour and 50 minute 
+    # period with each cycle occuring in about 12 hours and 25 minutes. However, the tidal heights of
+    # the two tides are not equal (e.g. one high tide is higher, and one low tide is lower). 
+    # For simplicity of this model, the tidal cycles are modeled as semidiurnal (two tide cycles per 
+    # day with equal heights). The time of each flood and ebb tide period is estimated at 6 hours for 
+    # simplicity.
+    
+    # Spring Flood Tide -> 896,000 m^3/d, spring Ebb Tide -> -904,000 m^3/d
+    # Neap Flood Tide -> 536,000 m^3/d, Neap Ebb Tide -> -482,000 m^3/d
+    E_tide_spring = -8300 / 4 # difference between spring flood and spring ebb tide m^3/6hr
+    E_tide_neap = 54000 / 4 # difference between neap flood and neap ebb tide m^3/6hr
+
+    daily_tide_diff = (E_tide_neap - E_tide_spring)/8
+    
+    if (t < 4){
+      Q_tide = E_tide_neap - t*daily_tide_diff
+    }
+    else{
+      if (((t-4) %% 16) == 0){
+        Q_tide = E_tide_spring
+      }
+        else if (((t-4) %% 16) > 0 && ((t-4) %% 16) < 8)
+        {
+          Q_tide = E_tide_spring + ((t-4) %% 16)*daily_tide_diff
+        }
+        else if (((t-4) %% 16) == 8)
+        {
+             Q_tide = E_tide_neap
+        }
+        else if (((t-4) %% 16) > 8 && ((t-4) %% 16) <= 16)
+        {
+          Q_tide = E_tide_neap - (((t-4)%%16)-8)*daily_tide_diff
+        }
+      }
+        
+     
+    # Specify temporal variability in He'eia stream flow rate based on mean
+    # measurements from July 2014-July 2015
+    if (t < 10) 
+    {
+        # End of July 2014
+        Q_st = 8860 # m^3/day
+    }
+    else if (t > 9 && t < 40) 
+    {
+        # Aug 2014
+        Q_st = 4620 # m^3/day
+    }
+    else if (t > 39 && t < 68) 
+    {
+        # Sept 2014
+        Q_st = 4650 # m^3/day
+    }
+    else if (t > 67 && t < 99) 
+    {
+        # Oct 2014
+        Q_st = 6560 # m^3/day
+    }
+    else if (t > 98 && t > 129) 
+    { 
+        # Nov 2014
+        Q_st = 4970 # m^3/day
+    }
+    else if (t > 128 && t < 160) 
+    {
+       # Dec 2014 
+       Q_st = 4580 # m^3/day
+    }
+    else if (t > 159 && t < 191) 
+    {
+       # Jan 2015 
+       Q_st = 4130 # m^3/day
+    }
+    else if (t > 190 && t < 219) 
+    { 
+       # Feb 2015 
+       Q_st = 3990 # m^3/day
+   }
+    else if (t > 218 && t < 250) 
+    {
+       # March 2015 
+       Q_st = 3940 # m^3/day
+    }
+    else if (t > 249 && t < 280) 
+    {
+       # April 2015
+       Q_st =  3840 # m^3/day
+    }
+    else if (t > 279 && t < 312) 
+    {
+       # May 2015
+       Q_st =  3600 # m^3/day
+    }
+    else if (t > 311 && t < 342) 
+    {
+       # June 2015
+       Q_st =  4160 # m^3/day
+    } 
+    else if (t > 341) 
+    {
+      # remainder of July 2015
+       Q_st = 3770 # m^3/day
+    }
+    
+    Q_st = Q_st/4 # convert from m^3/d to m^3/6hr
+    
+    No_in_taro = 0.148*Q_st # loading of organic N runoff from taro agriculture [g/6hr]
+    Na_in_taro = 0.006*Q_st # loading of ammonia N runoff from taro agriculture [g/6h]
+    Ni_in_taro = 0.006*Q_st # loading of nitrate N runoff from taro agriculture [g/6h]
+       # Stream organic N
+  dNo_st <- (No_st - Q_st*No_st+(-k_oa*No_st + k_ao*Na_st)*V_st)/V_st
+  # Stream ammonium
+  dNa_st <- (Na_st - Q_st*Na_st+(k_oa*No_st-(k_ao+k_nit+k_av)*Na_st + k_nit_red*Ni_st)*V_st)/V_st
+  # Stream nitrate    
+  dNi_st <- (Ni_st - Q_st*Ni_st + (k_nit*Na_st-k_nit_red*Ni_st)*V_st)/V_st
+  # Fishpond water organic N
+  dNo_fp <- ((Q_st*No_st+((-k_oa-k_s)*No_fp+k_ao*Na_fp+k_r*No_sd)*V_fp + Q_tide*(C_No_ocean-No_fp)))/V_fp
+  # Fishpond water ammonium    
+  dNa_fp <- (Q_st*Na_st + (k_oa*No_fp - (k_ao+k_nit+k_av+k_s)*Na_fp + k_r*Na_sd)*V_fp+Q_tide*
+             (C_Na_ocean-Na_fp)-((a_Na*k_g20*((Na_fp+Ni_fp)/(k_SN+No_fp+Ni_fp))+a_Na*k_ra)*alg))/V_fp
+  # Fishpond water nitrate    
+  dNi_fp <- (Q_st*Ni_st + (k_nit*Na_fp-k_s*Ni_fp+k_r*Ni_sd)*V_fp + Q_tide*(C_Ni_ocean-Ni_fp)-
+             ((a_Na*k_g20*((Na_fp+Ni_fp)/(k_SN+Na_fp+Ni_fp)) + a_Na*k_ra)*alg))/V_fp
+  # Sediment organic N    
+  dNo_sd <- ((k_s*No_fp-(k_oa+k_b+k_r)*No_sd + k_ao*Na_sd)*V_sed)/V_sed
+  # Sediment ammonium
+  dNa_sd <- ((k_s*Na_fp + k_oa*No_sd-(k_ao+k_nit_sed+k_r+k_b)*Na_sd + k_nit_red*Ni_sd)*V_sed)/V_sed
+  # Sediment nitrate    
+  dNi_sd <- ((k_s*Ni_fp+k_nit_sed*Na_sd-(k_denit+k_nit_red+k_r+ k_b)*Ni_sd)*V_sed)/V_sed
+  # Algae density
+  dalg <- (((a_Na*k_g20*((Na_fp+Ni_fp)/(k_SN+Na_fp+Ni_fp))-k_ra -((Q_st-Q_tide)/V_fp)))*
+           alg*(1-alg/K_alg)-k_ac*fish*alg)
+      
+  # Fish density
+      
+  # When algae density drops below a critical level, fish growth declines and fish begin to die off 
+  # until algae density increases again in response to predator decline
+  if (alg < 500) 
+  {
+    dfish <- -k_fd*fish
+  }
+  else 
+  {
+    dfish <- (k_fg*alg-k_fd)*fish
+  }
+  
+  return(list(c(No_st = dNo_st, Na_st = dNa_st, Ni_st = dNi_st, No_fp = dNo_fp, Na_fp = dNa_fp, Ni_fp = dNi_fp, No_sd = dNo_sd, Na_sd = dNa_sd, Ni_sd = dNi_sd, alg = dalg, fish = dfish)))
+
+})
+}
+```
+
+# Model Specification
+```{r}
+
+t6 <- seq(0, 100, by = 1/365/4) # spinning up over 100 years with a daily time step
+
+# TSS export from Kako'o marshland 2013 to 2017 was 18.5 mg/L
+
+pars6 <- c(
+      k_oa = 0.01/4, # conversion of organic N to ammonium N [1/6hr]
+      k_ao = 0.1/4, # conversion of ammonium N to organic N [1/6hr]
+      k_nit = 0.5/4, # nitrification in water column [1/6hr]
+      k_nit_red = 0.1/4, # reduction of nitrate N to ammonium N [1/6hr]
+      k_av = 0.7/4, # ammonium to ammonia volatilization rate [1/6hr]
+      k_nit_sed = 0.05/4, # nitrification rate in the sediment [1/6hr]
+      k_denit = 0.01/4, # denitrification rate constant [1/6hr]
+      
+      # Fishpond water-sediment exchange rate constants
+      k_r = 0.1/4, # resuspension rate [1/6hr]
+      k_s = 0.05/4, # settling rate [1/6hr]
+      k_b = 0.001/4, # burial removal rate [1/6hr] 
+      
+      # fish and algae rates and constants
+      a_Na = 0.2, # ratio of nitrogen to Chla in algae [g N/g Chla]
+      k_ra = 0.025/4, # algae respiration rate [1/6hr]
+      k_SN = 0.15, # half-saturation constant for N uptake [gN/m^3]
+      k_g20 = 1.5/4, # algae growth rate constant at 20 degrees C [1/6hr]
+      k_fg = 0.015/4, # rate of fish growth due to algae consumption [1/6hr]
+      k_ac = 0.0012/4, # rate of algae consumption by fish [1/6hr]
+      K_alg = 5000, # carrying capacity of algae [g/m^3]
+      
+      # nitrogen concentrations in ocean - units g/m^3
+      C_No_ocean = 0.001,
+      C_Na_ocean = 0.04, 
+      C_Ni_ocean = 0.02
+)
+
+# there will be seasonal variability in the baseline nitrogen forms present in the stream, fishpond and sediment based on tides, timing of nitrogen applications to the lo‘i, precipitation
+
+# specify initial concentrations of nitrogen forms (g/m^3) and for algae and fish (g/m^2)
+
+# Information on nitrogen output from Kako‘o taro agriculture from Bremer, et al 2018: total N is 0.16 
+# (+/- 0.08) g/m^3 with nitrate N 0.006 (+/- 0.014) g/m^3 and ammonia N at 0.006 (+/- 0.006) g/m^3
+# these represent an order of magnitude smaller ammonia and nitrate N composition from before
+
+# Nitrogen in FP water column (no measures of organic N):
+# summer mean:
+# nitrate = 0.66 g/m^3
+# ammonium = 0.02 g/m^3
+
+# winter mean:
+# nitrate = 0.69 g/m^3
+# ammonium = 0.05 g/m^3
+
+# low measured levels of nitrite (0.01 and 0.02 g/^3 in winter and summer, respectively)
+
+# Sediment nitrogen concentrations based on the Briggs, et al paper from 2013 on coastal endmembers
+
+# conversion factor for NH4-N: 1 mg NH4/l = 55.4 umol NH4/l
+
+# In the first 1cm of sediment:
+# ammonium (in terrogenous near egret island): 0.54 g/m^3 (~30 uM)
+# ammonium (in carbonate sediment in more central part of pond): 0.63 g/m^3 (~35 uM)
+
+# 0.59 g/m^3 average
+
+# organic N: 
+
+# waiting on organic N in FP and sediment, nitrate in sediment.
+
+
+state6 <- c(No_st = 0.148, # stream initial organic N [g/m^3]
+           Na_st = 0.006, # stream initial ammonium [g/m^3]
+           Ni_st = 0.006, # stream initial nitrate [g/m^3]
+           No_fp = 0, # fishpond initial organic N [g/m^3]
+           Na_fp = 0.035, # fishpond initial ammonium [g/m^3]
+           Ni_fp = 0.675, # fishpond initial nitrate [g/m^3]
+           No_sd = 0, # fishpond sediment initial organic N [g/m^3]
+           Na_sd = 0.59, # fishpond sediment initial ammonium [g/m^3]
+           Ni_sd = 0, # fishpond sediment initial nitrate [g/m^3]
+           alg = 0,    # fishpond initial algae [g/m^3]
+           fish = 0) # fishpond initial fish mass
+
+
+
+```
+
+
+```{r}
+fp6_out <- ode(y = state6, times = t6, func = fish_func_pfr_6, parms = pars6)
+```
+
+```{r}
+plot(fp6_out)
+```
+
+```{r}
+fp_df6 <- as.data.frame(fp6_out)
+```
+
+```{r}
+# Make a nice ggplot with desired content
+fp_water6 <- fp_df6 %>% 
+  select(time, No_fp, Na_fp, Ni_fp) %>% 
+  gather('No_fp', 'Na_fp', 'Ni_fp', key = "nitrogen", value = "concentration")
+n_fp6_plot <- ggplot(data = fp_water6, aes(x = time, y = concentration, col=nitrogen)) +
+  geom_line() +
+  guides(fill=FALSE) +
+  labs(title = "Modeled Nitrogen Compounds in He'eia Fishpond Water Column\n Time Step = 6 h", x = "Time (Years)", y = "Concentration (mg/L)") +
+  theme(axis.text.x= element_text(size = 8, hjust = .2), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5)) +
+  scale_colour_hue(name="Nitrogen Types",
+                         breaks=c("Na_fp", "Ni_fp", "No_fp"),
+                        labels = c(as.expression(bquote(NH[4]^-1-N)), 
+         as.expression(bquote(NO[3]^-1-N)), 
+         "Organic N"))
+
+n_fp6_plot
+```
+
+```{r}
+
+```
+
