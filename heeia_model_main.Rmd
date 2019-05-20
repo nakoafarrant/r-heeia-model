@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(deSolve)
 library(tidyverse)
 library(ggplot2)
+library(schoolmath)
 ```
 
 # Model Equations
@@ -379,6 +380,7 @@ ammonia_data_plot
 # 6-Hour Time Step: Model Equations
 Realized that running into issues with the stream and tide specifications that are determined based on the value of t and need to be adjusted based on the time step being taken
 ```{r}
+
 fish_func6 <- function(t, state6, pars6) {
   with(as.list(c(state6, pars6)), {
 
@@ -407,47 +409,38 @@ fish_func6 <- function(t, state6, pars6) {
     
     # define flow terms- m^/d
     Q_st = 3500 # average He‘eia stream flow conditions
-
-    # water volume flux rate (m^3/6hr)
-    sp_fl= 191660/6
-    sp_ebb = -174880/6
-    np_fl = 141384/6
-    np_ebb = -159938/6
-
-    if (t*365*4*1000 %% 128 < 32){
-      if (t*365*4*1000 %% 2 == 0){
+    timer = t*365*4
+    print(timer)
+    if (timer %% 128 < 32){
+      if (is.even(timer)){
         Q_tide = sp_fl
       }
       else{
         Q_tide = sp_ebb
       }
     }
-    else if (t*365*4*1000 %% 128 < 64){
-      if (t*365*4*1000 %% 2 == 0){
+    else if (timer %% 128 > 31 & timer %% 128 < 64){
+      if (is.even(timer)){
         Q_tide = np_fl
       }
       else{
         Q_tide = np_ebb
- 
       }
     }
-    else if (t*365*4*1000 %% 128 < 96){
-      if (t*365*4 %% 2 == 0){
-        Q_tide = np_fl
-        
+    else if (timer %% 128 > 63 & timer %% 128 < 96){
+      if (is.even(timer)){
+        Q_tide = sp_fl
       }
       else{
-        Q_tide = np_ebb
-        
+        Q_tide = sp_ebb
       }
     }
     else{
-      if (t*365*4*1000 %% 2 == 0){
+      if (is.even(timer)){
         Q_tide = np_fl
       }
       else{
         Q_tide = np_ebb
-        
       }
     }
     
@@ -563,6 +556,7 @@ fish_func6 <- function(t, state6, pars6) {
     dfish <- (k_fg*alg-k_fd)*fish
   }
 
+  print(paste("Q_tide = ", Q_tide))
   return(list(c(No_st = dNo_st, Na_st = dNa_st, Ni_st = dNi_st, No_fp = dNo_fp, Na_fp = dNa_fp, Ni_fp = dNi_fp, No_sd = dNo_sd, Na_sd = dNa_sd, Ni_sd = dNi_sd, alg = dalg, fish = dfish)))
 
 })
@@ -572,7 +566,7 @@ fish_func6 <- function(t, state6, pars6) {
 # Model Specification
 ```{r}
 
-t6 <- seq(0, 100, by = 1/365/4) # spinning up over 100 years with a 6 hour time step
+t6 <- seq(0, 50, by = 1/365/4) # spinning up over 100 years with a 6 hour time step
 
 # TSS export from Kako'o marshland 2013 to 2017 was 18.5 mg/L
 
@@ -602,7 +596,13 @@ pars6 <- c(
       # nitrogen concentrations in ocean - units g/m^3
       C_No_ocean = 0.001,
       C_Na_ocean = 0.04, 
-      C_Ni_ocean = 0.02
+      C_Ni_ocean = 0.02,
+      
+      # water volume flux rate (m^3/6hr)
+      sp_fl= 191660/6,
+      sp_ebb = -174880/6,
+      np_fl = 141384/6,
+      np_ebb = -159938/6
       
 )
 
@@ -656,9 +656,9 @@ state6 <- c(No_st = 0.148, # stream initial organic N [g/m^3]
 
 ```
 
-
+seems like the time step is jumping around when printing out t and Sam Collie made that this could be related to how the equations is being solved. If it's using Runge-Kutta methods then it draws on a weird time step pattern
 ```{r}
-fp6_out <- ode(y = state6, times = t6, func = fish_func6, parms = pars6)
+fp6_out <- ode(y = state6, times = t6, func = fish_func6, parms = pars6, method = "euler")
 ```
 
 ```{r}
@@ -713,13 +713,13 @@ nitate_combo_y1
 
 ```{r}
 # compare to year 80 of modeled fishpond nitrate to the 2014-2015 fishpond water nitrate data
-fp_nitrate_y80 <- fp_water6 %>% filter(nitrogen == "Ni_fp") %>% 
-  filter(time >= 80 & time < 81)
+fp_nitrate_y45 <- fp_water6 %>% filter(nitrogen == "Ni_fp") %>% 
+  filter(time >= 45 & time < 46)
 
 
-nitate_combo_y80 = ggplot(data = fp_nitrate_y80, aes(x = time, y = concentration)) +geom_line(col = 'green') + geom_point(data = nitrate_data, aes(x = day_ct/365+80, y = nit_mean),colour='blue')
+nitate_combo_y45 = ggplot(data = fp_nitrate_y45, aes(x = time, y = concentration)) +geom_line(col = 'green') + geom_point(data = nitrate_data, aes(x = day_ct/365+45, y = nit_mean),colour='blue')
 
-nitate_combo_y80
+nitate_combo_y45
 ```
 
 
@@ -737,13 +737,13 @@ amm_combo_y1
 
 ```{r}
 # compare to year 80 of modeled fishpond ammonium N to the 2014-2015 fishpond water ammonium data
-fp_amm_y80 <- fp_water6 %>% filter(nitrogen == "Na_fp") %>% 
-  filter(time >= 80 & time < 81)
+fp_amm_y45 <- fp_water6 %>% filter(nitrogen == "Na_fp") %>% 
+  filter(time >= 45 & time < 46)
 
 
-amm_combo_y80 = ggplot(data = fp_amm_y80, aes(x = time, y = concentration)) +geom_line(col = 'red') + geom_point(data = ammonium_data, aes(x = day_ct/365+80, y = amm_mean),colour='magenta')
+amm_combo_y45 = ggplot(data = fp_amm_y45, aes(x = time, y = concentration)) +geom_line(col = 'red') + geom_point(data = ammonium_data, aes(x = day_ct/365+45, y = amm_mean),colour='magenta')
 
-amm_combo_y80
+amm_combo_y45
 ```
 
 
