@@ -1,0 +1,205 @@
+---
+title: "vbgf_test"
+author: "Nakoa Farrant"
+date: "5/22/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(FSA)
+library(FSAdata)
+library(nlstools)
+library(TropFishR)
+library(tidyverse)
+library(ggplot2)
+library(plyr)
+```
+
+```{r}
+threadfin <- list(Winf = 286, K = 0.37, t0 = -0.2, M = 1.1, tr = 0.4)
+
+predict_mod(threadfin, FM_change = seq(0,6,0.1),
+   tc_change = seq(0.2,1,0.2), type = 'ypr', plot = T)  #where it is maximal  = MSY
+```
+
+```{r}
+Croaker2
+crm <- subset(Croaker2, sex == "M")
+```
+
+Found in Cheung, et al (2013) Nature Climate Change "Shrinking of fishes exacerbates impacts of global ocean changes on marine ecosystems". All parameters were determined from fish base. See supplementary materials from this paper
+
+asymptotic weight relationship for each fish is given as W_infi
+W_infi = a*(L_infi)^(b)
+
+for Chanos chanos (milkfish), 
+asymptotic length (L_infi) 183.4 cm, 
+K = 0.10 1/year, 
+a = 0.00193, 
+b = 3.0 
+where a and b are parameters of length-weight relationships for this fish. 
+
+for Mugil cephalus (mullet)
+asymptotic length (L_infi) 100.0 cm, 
+K = 0.27 1/year, 
+a = 0.0085, 
+b = 3.0 
+
+```{r}
+t <- seq(0,60,0.1) # time step of 0.1 years for a 60 year time frame
+
+Linf_chanos = 183.4 # cm
+K_chanos = 0.10 # 1/year
+a_chanos = 0.00193 
+b_chanos = 3.0 
+Winf_chanos = a_chanos*Linf_chanos^b_chanos # grams
+
+Linf_mugil = 100.0 # cm
+K_mugil = 0.27 # 1/year
+a_mugil = 0.0085 
+b_mugil = 3.0 
+Winf_mugil = a_mugil*Linf_mugil^b_mugil # grams
+
+Wt_chanos <- VBGF(list(Winf=Winf_chanos, K = K_chanos), t = t) 
+#plot(t, Wt_chanos, t="l", main = "VBGF for Chanos chanos (Milkfish)")
+
+Wt_mugil <- VBGF(list(Winf=Winf_mugil, K = K_mugil), t = t) 
+plot(t, Wt_mugil, t="l", main = "VBGF for Mugil cephalus (Mullet)")
+
+```
+```{r}
+Wt_mugil_df <- as.data.frame(t) %>% 
+  mutate(weight = Wt_mugil, gr_rate = 0)
+
+# calculate growth rate of fish in grams/6hr
+for (i in 1:length(Wt_mugil_df$gr_rate)-1){
+  Wt_mugil_df$gr_rate[i] = (Wt_mugil_df$weight[i+1]-Wt_mugil_df$weight[i])/0.1/365/4 
+}
+
+# calculate average growth rate during the first 4 years according to the von Bertalanffy
+avg_gr_4 = mean(Wt_mugil_df$gr_rate[1:40])
+paste(round(avg_gr_4, 3)) # [g/6hr]
+```
+
+```{r}
+# Use empirical method to estimate the natural mortality rates for each fish type
+# This method is documented here https://cran.r-project.org/web/packages/TropFishR/vignettes/tutorial.html with reference to Then, et al 2015
+# this is the TropFishR library
+
+M_chanos = M_empirical(Linf = Linf_chanos, K_l = K_chanos, method = "Then_growth")
+M_mugil = M_empirical(Linf = Linf_mugil, K_l = K_mugil, method = "Then_growth")
+paste("M chanos =", as.numeric(M_chanos))
+paste("M mugil =", as.numeric(M_mugil))
+
+```
+
+```{r}
+# using a different library but the same empirical method (Then growth) as above, find the same results for natural mortality rates
+# https://rdrr.io/cran/fishmethods/man/M.empirical.html
+
+# does the same mortality stuff from above
+
+library(fishmethods)
+Mchanos = M.empirical(Linf = Linf_chanos, Kl = K_chanos, method = 11)
+Mmugil = M.empirical(Linf = Linf_mugil, Kl = K_mugil, method = 11)
+
+paste("M.chanos =", as.numeric(Mchanos))
+paste("M.mugil =", as.numeric(Mmugil))
+
+Mmean = (Mchanos+Mmugil)/2
+paste("M.mean =", as.numeric(Mmean))
+```
+
+```{r}
+data(whiting)
+View(whiting)
+
+```
+
+```{r}
+# Virtual Popuation Analysis with age-composition data
+output <- VPA(param = whiting, catch_columns = 1, terminalE = 0.5, analysis_type = "VPA")
+plot(output)
+```
+
+```{r}
+# Virtual population analysis with length-composition data
+data(hake)
+VPA(hake, terminalE = 0.5, analysis_type = "VPA", plot = TRUE,
+    catch_unit = "'000", plus_group = TRUE)
+```
+
+
+```{r}
+midlengths_chanos <- c(9, 15, 21, 27, 33, 39, 45, 51, 57, 63, 69, 75, 100, 160)
+catch_chanos <- c(0, 0, 10000, 5000, 50000, 50000, 50000, 68990, 0, 0, 0, 0, 25000, 16000)
+chanos_pred_list <- list(midLengths = midlengths_chanos, catch = catch_chanos, Linf = Linf_chanos, K = K_chanos, t0 = 0, M = M_chanos, FM = 0, a = a_chanos, b = b_chanos, meanValue = c(1.0, 1.0, 1.0, 1.5, 1.5, 2.0, 2.0, 2.5, 2.5, 2.5, 3.0, 3.0, 3.0, 3.0))
+```
+
+
+```{r}
+TB1 <- VPA(chanos_pred_list, terminalE = 0.5, analysis_type = "VPA", plot = TRUE,
+    catch_unit = "'000", plus_group = TRUE)
+```
+
+
+```{r, data frame organization}
+fish_df = as.data.frame(t) %>% 
+  # convert weights from grams to kg
+  mutate("Chanos chanos" = Wt_chanos/1000, "Mugil cephalus" = Wt_mugil/1000) %>% 
+  gather(key = Fish, value = weight, c("Chanos chanos", "Mugil cephalus"))
+```
+
+```{r, nice VBGF graph}
+
+
+vbgf_plot <- ggplot(data = fish_df, aes(x = t, y = weight, col = Fish)) +
+  geom_line() +
+  labs(title = "von Bertalanffy Growth Models", x = "Age (years)", y = "Weight (kg)") +
+  guides(fill = FALSE) +
+  theme(axis.text.x= element_text(size = 8), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5)) +
+  scale_colour_hue(name="Fish Type",
+                         breaks=c("Chanos chanos", "Mugil cephalus"),
+                        labels = c(expression(italic("Chanos chanos")), 
+        expression(italic("Mugil cephalus"))))
+
+vbgf_plot
+# somthing is wronge with this graph. It is either in kg or some other units. Also not sure about the x-axis
+```
+
+
+
+Searched the sea around us website 
+for mugil cephalus
+- maximum length is 67cm, trophic level is 2.26, medium demersals (30-89cm) functional group
+
+
+
+```{r}
+library(rfishbase)
+```
+
+
+```{r}
+mugil_popgrowth = popgrowth(species_list = "Mugil cephalus")
+```
+
+```{r}
+length_freq(species_list = "Mugil cephalus")
+```
+
+```{r}
+stocks(species_list = "Mugil cephalus")
+```
+
+```{r}
+popqb(species_list = "Mugil cephalus")
+```
+
+Whole-body nitrogen and crude protein: L.J. Ramseyer (2000, in review; see also www.mi.nmfs.gov/Nfish.html) has analysed the relationship between whole-fish wet weight and whole-body nitrogen content for 68 species and hybrids, based on data extracted from the literature. He found the following relationship: log N (g) = 1.03*(log wet weight) - 1.65; n=2811, r^2=0.996, p<0.001. For the conversion from nitrogen to crude protein he gives the ratio: crude protein = 6.25 * nitrogen. We have added these relationships here for your convenience.
+
+
