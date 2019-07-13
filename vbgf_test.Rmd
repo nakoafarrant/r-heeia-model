@@ -19,17 +19,10 @@ library(ggplot2)
 library(plyr)
 ```
 
-```{r}
-threadfin <- list(Winf = 286, K = 0.37, t0 = -0.2, M = 1.1, tr = 0.4)
 
-predict_mod(threadfin, FM_change = seq(0,6,0.1),
-   tc_change = seq(0.2,1,0.2), type = 'ypr', plot = T)  #where it is maximal  = MSY
-```
 
-```{r}
-Croaker2
-crm <- subset(Croaker2, sex == "M")
-```
+
+
 
 Found in Cheung, et al (2013) Nature Climate Change "Shrinking of fishes exacerbates impacts of global ocean changes on marine ecosystems". All parameters were determined from fish base. See supplementary materials from this paper
 
@@ -46,7 +39,7 @@ where a and b are parameters of length-weight relationships for this fish.
 for Mugil cephalus (mullet)
 asymptotic length (L_infi) 100.0 cm, 
 K = 0.27 1/year, 
-a = 0.0085, 
+a = 0.0321 for M. cephalus found in Hawai'i. for overall M. cephalus in fishbase, a = 0.0085 
 b = 3.0 
 
 ```{r}
@@ -58,11 +51,14 @@ a_chanos = 0.00193
 b_chanos = 3.0 
 Winf_chanos = a_chanos*Linf_chanos^b_chanos # grams
 
-Linf_mugil = 100.0 # cm
-K_mugil = 0.27 # 1/year
-a_mugil = 0.0085 
+Linf_mugil = 60 # cm, was 100cm, could also be 63 which is the mean of fishbase.60 top length of adults in Hawai'i was around 50cm but could bumped up to 
+K_mugil = 0.27 # 1/year and could be 0.24 which is the geometric mean of fishbase
+a_mugil = 0.0321 # was 0.0085 for overall fishbase sample. 
 b_mugil = 3.0 
 Winf_mugil = a_mugil*Linf_mugil^b_mugil # grams
+# when using Linf = 100cm and a_mugil= 0.0085, Winf = 8500
+# reported lengths from hawai'i estuary sample go to 51.6cm and weights of 1800 g
+# using Linf 50cm and a = 0.0321, b = 3.0, Winf = 4012g which seems much higher than the sample
 
 Wt_chanos <- VBGF(list(Winf=Winf_chanos, K = K_chanos), t = t) 
 #plot(t, Wt_chanos, t="l", main = "VBGF for Chanos chanos (Milkfish)")
@@ -70,7 +66,44 @@ Wt_chanos <- VBGF(list(Winf=Winf_chanos, K = K_chanos), t = t)
 Wt_mugil <- VBGF(list(Winf=Winf_mugil, K = K_mugil), t = t) 
 plot(t, Wt_mugil, t="l", main = "VBGF for Mugil cephalus (Mullet)")
 
+# Use empirical method to estimate the natural mortality rates for each fish type
+# This method is documented here https://cran.r-project.org/web/packages/TropFishR/vignettes/tutorial.html with reference to Then, et al 2015
+# this is the TropFishR library
+
+M_chanos = M_empirical(Linf = Linf_chanos, K_l = K_chanos, method = "Then_growth")
+M_mugil = M_empirical(Linf = Linf_mugil, K_l = K_mugil, method = "Then_growth")
+paste("M chanos =", as.numeric(M_chanos))
+paste("M mugil =", as.numeric(M_mugil))
+
+# Using the Pauly 1979 empirical equation for t0 from fishbase. Seems to be log10 and not ln because other instances on the fishbase page explicityly use ln. http://www.fishbase.us/manual/English/Key%20Facts.htm#resilience
+t0_mugil = -exp(-0.3922-0.2752*log10(Linf_mugil)-1.038*log10(K_mugil))
+Lm_mugil = 35 #cm, length at maturity
+
+#calculate the time to maturity from empirical formula on fishbase 
+tm_mugil = t0_mugil- log(1-Lm_mugil/Linf_mugil)/K_mugil
+
+# length classwith the highest biomass in the unfished population
+Lopt_mugil = Linf_mugil*(3/(3+M_mugil/K_mugil))
 ```
+
+```{r}
+mugil_list <- list(Winf = Winf_mugil, K = K_mugil, t0 = t0_mugil, M = M_mugil, tr = 2)
+
+mugil_pred <- predict_mod(mugil_list, FM_change = seq(0.3,0.4,0.1), tc_change = seq(2,4,1), type = 'ypr')  #where it is maximal  = MSY
+
+plot(mugil_pred, xaxis1 = "FM", yaxis_iso = "Lc", yaxis1 = "Y_R", yaxis2 = "B_R", mark = TRUE, ylab1 = "Y/R", ylab2 = "B/R")
+
+# in the below graph with Y_R and B_R on yaxis 1 and 2, respectively, the biomass is just Y/R divided by fishing mortality
+```
+
+
+```{r}
+data(hake)
+hake_vpa = VPA(hake, terminalE = 0.5, analysis_type = "VPA", plot = TRUE,
+catch_unit = "'000", plus_group = TRUE)
+```
+
+
 ```{r}
 Wt_mugil_df <- as.data.frame(t) %>% 
   mutate(weight = Wt_mugil, gr_rate = 0)
@@ -85,17 +118,7 @@ avg_gr_4 = mean(Wt_mugil_df$gr_rate[1:40])
 paste(round(avg_gr_4, 3)) # [g/6hr]
 ```
 
-```{r}
-# Use empirical method to estimate the natural mortality rates for each fish type
-# This method is documented here https://cran.r-project.org/web/packages/TropFishR/vignettes/tutorial.html with reference to Then, et al 2015
-# this is the TropFishR library
 
-M_chanos = M_empirical(Linf = Linf_chanos, K_l = K_chanos, method = "Then_growth")
-M_mugil = M_empirical(Linf = Linf_mugil, K_l = K_mugil, method = "Then_growth")
-paste("M chanos =", as.numeric(M_chanos))
-paste("M mugil =", as.numeric(M_mugil))
-
-```
 
 ```{r}
 # using a different library but the same empirical method (Then growth) as above, find the same results for natural mortality rates
@@ -110,8 +133,6 @@ Mmugil = M.empirical(Linf = Linf_mugil, Kl = K_mugil, method = 11)
 paste("M.chanos =", as.numeric(Mchanos))
 paste("M.mugil =", as.numeric(Mmugil))
 
-Mmean = (Mchanos+Mmugil)/2
-paste("M.mean =", as.numeric(Mmean))
 ```
 
 ```{r}
@@ -198,6 +219,10 @@ stocks(species_list = "Mugil cephalus")
 
 ```{r}
 popqb(species_list = "Mugil cephalus")
+```
+
+```{r}
+maturity("Mugil cephalus")
 ```
 
 Whole-body nitrogen and crude protein: L.J. Ramseyer (2000, in review; see also www.mi.nmfs.gov/Nfish.html) has analysed the relationship between whole-fish wet weight and whole-body nitrogen content for 68 species and hybrids, based on data extracted from the literature. He found the following relationship: log N (g) = 1.03*(log wet weight) - 1.65; n=2811, r^2=0.996, p<0.001. For the conversion from nitrogen to crude protein he gives the ratio: crude protein = 6.25 * nitrogen. We have added these relationships here for your convenience.

@@ -17,13 +17,15 @@ library(tidyverse)
 library(TropFishR)
 require(MASS)
 require(dplyr)
+library(colorspace)
+library(MLmetrics)
 ```
 
 ```{r}
 # The below values are characteristic of Mugil cephalus (striped mullet, ‘ama‘ama) as defined in the S.I. of Cheung, et al. 2013, who derived these values from data that is freely available at fishbase.org
 Linf_mugil = 100 # asymptotic length for Mugil cephalus, [cm]
 K_mugil = 0.27 # von Bertalanffy growth parameter, [1/year]
-a_mugil = 0.0085 # length-weight conversion parameter from FishBase
+a_mugil = 0.032 # a for overall M.cephauls on fishbase is 0.0085 but this a is specific to M. cephalus in Hawai'i estuaries. length-weight conversion parameter from FishBase
 b_mugil = 3.0 # length-weight conversion parameter from FishBase
 Winf_mugil = a_mugil*Linf_mugil^b_mugil # asymptotic weight using length-weight conversion [grams]
 
@@ -31,29 +33,12 @@ Winf_mugil = a_mugil*Linf_mugil^b_mugil # asymptotic weight using length-weight 
 M_mugil = M_empirical(Linf = Linf_mugil, K_l = K_mugil, method = "Then_growth") # [1/year]
 ```
 
-
 # 6-Hour Time Step: Model Equations
 Realized that running into issues with the stream and tide specifications that are determined based on the value of t and need to be adjusted based on the time step being taken
 ```{r}
 
 fish_func6 <- function(t, state6, pars6) {
   with(as.list(c(state6, pars6)), {
-
-    # define physical parameters of ecosystem 
-    h_st = 0.5 # average depth of stream [m]
-    l_st = 700 # length of interest for He‘eia Stream [m]
-    w_st = 15 # approximate width of stream [m]
-    
-    A_fp = 360000 # area of fishpond [m^2]
-    h_fp = 0.4 # average depth of fishpond water column [m]
-    
-    A_sed = 360000 # area of sediment below fishpond water column [m^2]
-    h_sed = 0.005 # depth of sediment of interest in meters [m]
-    
-    # define volumes of compartments - m^3
-    V_st = h_st*l_st*w_st # stream
-    V_fp = A_fp*h_fp # fishpond water
-    V_sed = A_sed*h_sed # fishpond sediment
     
     # create an integer counter variable, time is otherwise in 6 hr intervals
     step = t*365*4 
@@ -65,8 +50,8 @@ fish_func6 <- function(t, state6, pars6) {
     
     #k_fd = (0.0256 + 0.0123*T1)/4 # temperature-driven fish mortality rate [1/6hr]
     
-    # define flow terms- m^/d
-    Q_st = 3500 # average He‘eia stream flow conditions
+    # define flow terms- m^3/d
+    Q_st = 3500/4 # average He‘eia stream flow conditions
     
     # There are 4 tidal cycles every day that alternate between flood and ebb tides at each 6 hour time     step. Additionally, roughly every 8 days there is a switch from spring tide to neap tide based on       the moon cycle (spring when full or new moon, neap during quarter moon phases). This results in         desired shifts from spring to neap every ~32 tide shifts (8 days * 4 tides/day)
     
@@ -185,16 +170,19 @@ fish_func6 <- function(t, state6, pars6) {
     }
 
     
-    W_No_taro = 0.148*Q_st # loading of organic N runoff from taro agriculture [g/6hr]
-    W_Na_taro = 0.006*Q_st # loading of ammonia N runoff from taro agriculture [g/6h]
-    W_Ni_taro = 0.006*Q_st # loading of nitrate N runoff from taro agriculture [g/6h]
-
+    W_No = LU_No*Q_st # loading of organic N runoff based on the evaluated land use organic N concentration in the He‘eia Wetland [g/6hr] = g/m^3 * m^3/6hr
+    W_Na = LU_Na*Q_st # loading of organic N runoff based on the evaluated land use ammonium N concentration in the He‘eia Wetland [g/6hr]
+    W_Ni = LU_Ni*Q_st # loading of organic N runoff based on the evaluated land use nitrate N concentration in the He‘eia Wetland [g/6hr]
+    
   # Stream organic N
-  dNo_st <- (W_No_taro- Q_st*No_st+(-k_oa*No_st + k_ao*Na_st)*V_st)/V_st
+  dNo_st <- (W_No- Q_st*No_st+(-k_oa*No_st + k_ao*Na_st)*V_st)/V_st
+  #dNo_st <- LU_No*exp(-k_oa/Q_st*l_st) + LU_Na*exp(k_ao/Q_st*l_st)
   # Stream ammonium
-  dNa_st <- (W_Na_taro - Q_st*Na_st+(k_oa*No_st-(k_ao+k_nit+k_av)*Na_st + k_nit_red*Ni_st)*V_st)/V_st
+  dNa_st <- (W_Na - Q_st*Na_st+(k_oa*No_st-(k_ao+k_nit+k_av)*Na_st + k_nit_red*Ni_st)*V_st)/V_st
+  #dNa_st <- LU_Na*exp((-(k_ao+k_nit+k_av))/Q_st*l_st) + LU_No*exp(k_oa/Q_st*l_st) + LU_Ni*exp(k_nit_red/Q_st*l_st)
   # Stream nitrate    
-  dNi_st <- (W_Ni_taro- Q_st*Ni_st + (k_nit*Na_st-k_nit_red*Ni_st)*V_st)/V_st
+  dNi_st <- (W_Ni- Q_st*Ni_st + (k_nit*Na_st-k_nit_red*Ni_st)*V_st)/V_st
+  #dNi_st <- LU_Ni*exp(-k_nit_red/Q_st*l_st) + LU_Na*exp(k_nit/Q_st*l_st)
   # Fishpond water organic N
   dNo_fp <- ((Q_st*No_st+((-k_oa-k_s)*No_fp+k_ao*Na_fp+k_r*No_sd)*V_fp + Q_tide*(No_ocean-No_fp)))/V_fp
   # Fishpond water ammonium    
@@ -210,25 +198,103 @@ fish_func6 <- function(t, state6, pars6) {
   # Sediment nitrate    
   dNi_sd <- ((k_s*Ni_fp+k_nit_sed*Na_sd-(k_denit+k_nit_red+k_r+ k_b)*Ni_sd)*V_sed)/V_sed
   # Algae density
-  dalg <- (((r_NChl*k_g20*((Na_fp+Ni_fp)/(k_SN+Na_fp+Ni_fp)) -k_ra -((Q_st-Q_tide)/V_fp)))*
-           alg -k_ac*fish*alg)
+  dalg <- ((r_NChl*k_g20*((Na_fp+Ni_fp)/(k_SN+Na_fp+Ni_fp)) -k_ra -((Q_st-Q_tide)/V_fp)))*
+           alg - k_ac*fish
   # Fish density
-  dfish <- (k_fg*alg - k_fd)*fish # question the parentheses location from a units perspective
-
-  return(list(c(No_st = dNo_st, Na_st = dNa_st, Ni_st = dNi_st, No_fp = dNo_fp, Na_fp = dNa_fp, Ni_fp = dNi_fp, No_sd = dNo_sd, Na_sd = dNa_sd, Ni_sd = dNi_sd, alg = dalg, fish = dfish)))
+  if(step < 365*4)
+    catch = 0
+  else
+    catch = k_catch
   
+  dfish <- (k_fg - k_fd - catch)*fish # question the parentheses location from a units perspective
+  #dfish <- k_fg*fish*(1-fish/carrying)
+dcatch = catch*fish
+  return(list(c(No_st = dNo_st, Na_st = dNa_st, Ni_st = dNi_st, No_fp = dNo_fp, Na_fp = dNa_fp, Ni_fp = dNi_fp, No_sd = dNo_sd, Na_sd = dNa_sd, Ni_sd = dNi_sd, alg = dalg, fish = dfish, catch = dcatch)))
+
 })
 }
 ```
 
 # Model Specification
 ```{r}
-years = 100
-t6 <- seq(0, years, by = 1/365/4) # 100 years with a 6 hour time step
+years = 50
+t <- seq(0, years, by = 1/365/4) # 100 years with a 6 hour time step
 
-# For reference, TSS export from Kako'o marshland 2013 to 2017 was 18.5 mg/L
+# define physical parameters of ecosystem 
+h_st = 0.5 # [m] average depth of stream 
+l_st = 700 # [m] length of interest for He‘eia Stream
+w_st = 15 # [m] approximate width of stream
 
-pars6 <- c(
+A_fp = 360000 # [m^2] area of fishpond
+h_fp = 0.4 # [m] average depth of fishpond water column [m]
+
+A_sed = 360000 # [m^2] area of sediment below fishpond water column
+h_sed = 0.005 # [m] depth of sediment of interest in meters
+
+# define volumes of compartments - m^3
+V_st = h_st*l_st*w_st # stream
+V_fp = A_fp*h_fp # fishpond water
+V_sed = A_sed*h_sed # fishpond sediment
+
+pars_control <- c(
+      LU_No = 1.8, # [g/m^3] organic N concentration in wetland for current land use
+      LU_Na = 0.07, # [g/m^3] ammonium N concentration in wetland for current land use
+      LU_Ni = 0.07, # [g/m^3] nitrate N concentration in wetland for current land use
+      
+      carrying = 56, # [g/m^2] carrying capacity for fish in He‘eia Fishpond, 500 pounds per acre
+      
+      k_oa = 0.01/4, # [1/6hr] conversion of organic N to ammonium N
+      k_ao = 0.1/4, # [1/6hr] conversion of ammonium N to organic N 
+      k_nit = 0.5/4, # [1/6hr] nitrification in water column
+      k_nit_red = 0.1/4, # [1/6hr] reduction of nitrate N to ammonium N
+      k_av = 0.7/4, # [1/6hr] ammonium to ammonia volatilization rate
+      k_nit_sed = 0.05/4, # [1/6hr] nitrification rate in the sediment
+      k_denit = 0.01/4, # [1/6hr] denitrification rate constant
+      
+      # Fishpond water-sediment exchange rate constants
+      k_r = 0.4/4, # [1/6hr] resuspension rate
+      k_s = 0.8/4, # [1/6hr] settling rate, used to be 0.05 1/day. If going to make it this high, maybe it should just be related to phytoplankton settling rate due to their size. This is from Burdoff and Lorenzen
+      k_b = 0.001/4, # [1/6hr] burial removal rate [1/6hr] 
+      
+      # fish and algae rates and constants
+      r_NChl = 0.2, # [g N/g Chla] ratio of nitrogen to Chla in algae
+      k_ra = 0.025/4, # [1/6hr] algae respiration rate
+      k_SN = 0.015, # [gN/m^3] half-saturation constant for N uptake. Chapra says 10-15 mgN/m^3. Previously had this at 150 mg/m^3
+      k_g20 = 1.5/4, # [m] algae growth rate constant at 20ºC
+      #k_fg = 0.015/4, # rate of fish growth due to algae consumption [1/6hr]
+      # K for mullet is 0.27 1/yr -> 0.0007 1/day, this is lower than the current growth rate but the current growth rate also seems particularly low
+      k_ac = 0.08, # expect M. cephalus to consume ~8% of it's body weight in food, De Silva & Perera 
+      k_fg = 0.27/365/4, # [1/6hr]
+      #k_fg = K_mugil/365/4, # rate of fish growth [1/6hr], K_mugil = 0.27
+      # based on doubling time of 1.4-4.4 years, r_growth = ln(2)/1.4 = 0.495 /yr to ln(2)/4.4 = 0.158 /yr, prior r (whatever that means) is 0.51
+      k_fd = M_mugil/365/4, # [1/6hr] rate of fish death from empirical Then formula, M_mugil = 0.346
+      k_catch = M_mugil/365/4, # could be 0.343 based on Mexico study. file:///Users/Nakoa/Downloads/2016GallardoetalfisherydeMugelcephalusJMBO-5-151.pdf
+      # fishbase also says you generally want Exploitation E to be about 0.5 which is F/Z = F/(F+M) so M and F should be approximately equal ideally for MSY
+      # From Barman, Jana, Garg, Bhatnagar, https://link.springer.com/article/10.1007/s10499-004-2479-5
+      # growth rate for M. cephalus in salinity 20 ppt 0.69 g/d or 0.67 g/d in 25 ppt
+      # SGR --specific growth rate of weight-- (% BW (in grams) per day) about 4% per day
+      k_birth = 0.35/365/4, # [1/6hr]
+      
+      # nitrogen concentrations in ocean - units g/m^3
+      No_ocean = 0.001,
+      Na_ocean = 0.04, 
+      Ni_ocean = 0.02,
+      
+      # water volume flux rate (m^3/6hr)
+      sp_fl= 191660/4,
+      sp_ebb = -174880/4,
+      np_fl = 141384/4,
+      np_ebb = -159938/4
+)
+
+
+pars_restored <- c(
+      LU_No = 6.2, # [g/m^3] organic N concentration in wetland for current land use
+      LU_Na = 0.25, # [g/m^3] ammonium N concentration in wetland for current land use
+      LU_Ni = 0.25, # [g/m^3] nitrate N concentration in wetland for current land use
+      
+      carrying = 56, # carrying capacity for fish in He‘eia Fishpond, 500 pounds per acre
+      
       k_oa = 0.01/4, # conversion of organic N to ammonium N [1/6hr]
       k_ao = 0.1/4, # conversion of ammonium N to organic N [1/6hr]
       k_nit = 0.5/4, # nitrification in water column [1/6hr]
@@ -250,8 +316,10 @@ pars6 <- c(
       #k_fg = 0.015/4, # rate of fish growth due to algae consumption [1/6hr]
       # K for mullet is 0.27 1/yr -> 0.0007 1/day, this is lower than the current growth rate but the current growth rate also seems particularly low
       k_ac = 0.0012/4, # rate of algae consumption by fish [1/6hr]
-      k_fg = 0.15/4, # rate of fish growth based on VBGF K [1/6hr]
-      k_fd = M_mugil/365/4, # rate of fish death from empirical Then formula [1/6hr]
+      k_fg = K_mugil/365/4, # rate of fish growth [1/6hr], K_mugil = 0.27
+      k_fd = M_mugil/365/4, # rate of fish death from empirical Then formula [1/6hr], M_mugil = 0.346
+      k_catch = 0.05/365/4,
+      k_birth = 0.35/365/4,
       
       # nitrogen concentrations in ocean - units g/m^3
       No_ocean = 0.001,
@@ -263,9 +331,53 @@ pars6 <- c(
       sp_ebb = -174880/4,
       np_fl = 141384/4,
       np_ebb = -159938/4
-      
 )
 
+pars_urban <- c(
+      LU_No = 13, # [g/m^3] organic N concentration in wetland for current land use
+      LU_Na = 0.53, # [g/m^3] ammonium N concentration in wetland for current land use
+      LU_Ni = 0.53, # [g/m^3] nitrate N concentration in wetland for current land use
+      
+      carrying = 56, # [g/m^2], carrying capacity for fish in He‘eia Fishpond, 500 pounds per acre from Keala loko i‘a doc
+      
+      k_oa = 0.01/4, # conversion of organic N to ammonium N [1/6hr]
+      k_ao = 0.1/4, # conversion of ammonium N to organic N [1/6hr]
+      k_nit = 0.5/4, # nitrification in water column [1/6hr]
+      k_nit_red = 0.1/4, # reduction of nitrate N to ammonium N [1/6hr]
+      k_av = 0.7/4, # ammonium to ammonia volatilization rate [1/6hr]
+      k_nit_sed = 0.05/4, # nitrification rate in the sediment [1/6hr]
+      k_denit = 0.01/4, # denitrification rate constant [1/6hr]
+      
+      # Fishpond water-sediment exchange rate constants
+      k_r = 0.1/4, # resuspension rate [1/6hr]
+      k_s = 0.8/4, # settling rate [1/6hr], used to be 0.05 1/day. If going to make it this high, maybe it should just be related to phytoplankton settling rate due to their size. This is from Burdoff and Lorenzen
+      k_b = 0.001/4, # burial removal rate [1/6hr] 
+      
+      # fish and algae rates and constants
+      r_NChl = 0.2, # ratio of nitrogen to Chla in algae [g N/g Chla]
+      k_ra = 0.025/4, # algae respiration rate [1/6hr]
+      k_SN = 0.015, # half-saturation constant for N uptake [gN/m^3], Chapra says 10-15 mgN/m^3. Previously had this at 150 mg/m^3
+      k_g20 = 1.5/4, # algae growth rate constant at 20 degrees C [1/6hr]
+      #k_fg = 0.015/4, # rate of fish growth due to algae consumption [1/6hr]
+      # K for mullet is 0.27 1/yr -> 0.0007 1/day, this is lower than the current growth rate but the current growth rate also seems particularly low
+      k_ac = 0.0012/4, # rate of algae consumption by fish [1/6hr]
+      k_fg = 1.3/365/4,
+      #k_fg = K_mugil/365/4, # rate of fish growth [1/6hr], K_mugil = 0.27
+      k_fd = M_mugil/365/4, # rate of fish death from empirical Then formula [1/6hr], M_mugil = 0.346
+      k_catch = 0.05/365/4,
+      k_birth = 0.35/365/4,
+      
+      # nitrogen concentrations in ocean - units g/m^3
+      No_ocean = 0.001,
+      Na_ocean = 0.04, 
+      Ni_ocean = 0.02,
+      
+      # water volume flux rate (m^3/6hr)
+      sp_fl= 191660/4,
+      sp_ebb = -174880/4,
+      np_fl = 141384/4,
+      np_ebb = -159938/4
+)
 # there will be seasonal variability in the baseline nitrogen forms present in the stream, fishpond and sediment based on tides, timing of nitrogen applications to the lo‘i, precipitation
 
 # specify initial concentrations of nitrogen forms (g/m^3) and for algae and fish (g/m^2)
@@ -301,52 +413,123 @@ pars6 <- c(
 
 
 state6 <- c(
-           No_st = 0.148, # stream initial organic N [g/m^3]
-           Na_st = 0.006, # stream initial ammonium [g/m^3]
-           Ni_st = 0.006, # stream initial nitrate [g/m^3]
-           No_fp = 0.1, # fishpond initial organic N [g/m^3], estimated from Charles Young thesis
-           Na_fp = 0.035, # fishpond initial ammonium [g/m^3]
-           Ni_fp = 0.675, # fishpond initial nitrate [g/m^3]
-           No_sd = 0.1, # fishpond sediment initial organic N [g/m^3], estimated from Young thesis
-           Na_sd = 0.6, # fishpond sediment initial ammonium [g/m^3], sediment is a source for ammonium according to Hargreaves (1998)
-           Ni_sd = 0.01, # fishpond sediment initial nitrate [g/m^3], sediment is a sink for nitrate according to Hargreaves (1998). Same as original model
-           alg = 0.0015,    # initial algae [g Chl/m^3]
-           fish = 8) # initial fish density [g/m^3] 1150000 g/144000m^3 = 7.986 g/m^3
+           No_st = 0.148, # [g/m^3] stream initial organic N
+           Na_st = 0.006, # [g/m^3] stream initial ammonium
+           Ni_st = 0.006, # [g/m^3] stream initial nitrate
+           No_fp = 0.1, # [g/m^3] fishpond initial organic N, estimated from Charles Young thesis
+           Na_fp = 0.035, # [g/m^3] fishpond initial ammonium
+           Ni_fp = 0.675, # [g/m^3] fishpond initial nitrate
+           No_sd = 0.1, # [g/m^3] fishpond sediment initial organic N, estimated from Young thesis
+           Na_sd = 0.6, # [g/m^3] fishpond sediment initial ammonium, sediment is a source for ammonium according to Hargreaves (1998)
+           Ni_sd = 0.01, # [g/m^3]  fishpond sediment initial nitrate, sediment is a sink for nitrate according to Hargreaves (1998).
+           alg = 0.03, # [g algae/m^2] initial algae concentration based on average of data from Frank, et al (0.0015 g Chl a/m^3) to g/m^2 algae. 0.0015 g Chla/m^3 / 0.02 g algae/g Chla* 0.4 m
+           # range of conversion factors [g alg/g Chla] from Chapra 0.005-0.025. Would be 0.12 g/m^2 algae if used 0.005
+           # Using conversion factor from Chapra
+           fish = 10, # [g/m^2] initial ‘ama‘ama  density
+           catch = 0) 
 
-# According to Mohlenkamp et al. 2019, from 2006-2009, Paepae o He'eia produced ~1.2 metric tons of moi (Pacific Threadfin) 
+# According to Mohlenkamp et al. 2019, from 2006-2009, Paepae o He'eia produced ~1.2 metric tons of moi (Pacific Threadfin) which is about 400 kg per year
 
 # historical estimates for this fishpond max out around 15 metric tons (15,000 kg) with an asymptotic weight of 8.5 kg per striped mullet this would amount to ~1750 fully grown striped mullet.
 # According to FishBase, the common length is 50 cm which equates to a weight closer to 1 kg based on the length-weight conversion factor.  This would require closer to 15,000 fish to reach capacity
 
-# hypothetically stock with 3 cm fingerlings that have a mass of ~230 grams each based on length-weight conversion. These fish would be an estimated 1.5 years old based on the VBGF curve and the estimated weight. If we stock the fishpond with 5,000 fingerlings, the inital mass in the fishpond is 1.15*10^6 grams (1.1 metric tons).
+# hypothetically stock with 3 cm fingerlings that have a mass of ~230 grams each based on length-weight conversion. These fish would be an estimated 1.5 years old based on the VBGF curve and the estimated weight. If we stock the fishpond with 5,000 fingerlings, the inital mass in the fishpond is 1.15*10^6 grams (1.1 metric tons). Initial fish density [g/m^3] 1150000 g/360000m^3 = 3.19 g/m^3 = 3.2 g/m^3
+
+# volume = 144000m^3. 1150000 g/144000m^3 = 7.986 g/m^3 = 8 g/m^3
 
 # fish base indicates sexual maturity at 3-4 years for Mugil cephalus. At the end of 4 years, fish are estimated to be ~3.2 kg each, which would translate to 15 metric tons
 
-# Biswas, et al. 2012 (https://www.sciencedirect.com/science/article/pii/S0044848612000658) suggests a stocking density of M. cephalus fry (~0.17 g in size) at 15,000 fry/hectar. He'eia fishpond is 36 ha. This is 91,800 grams of M. cephalus stocked in the fishpond, which is close to what was suggested above with slighly larger fish
+# Biswas, et al. 2012 (https://www.sciencedirect.com/science/article/pii/S0044848612000658) suggests a stocking density of M. cephalus fry (~0.17 g in size) at 15,000 fry/hectare. He'eia fishpond is 36 ha. This is 91,800 grams of M. cephalus stocked in the fishpond, which is close to what was suggested above with slightly larger fish
+
+# 1150000 g/144000m^3 = 7.986 g/m^3
+# fish carrying capacity at 500 pounds per acre -> 56 g/m^2
+
+
 
 ```
 
 
 ```{r}
-fp6_out <- ode(y = state6, times = t6, func = fish_func6, parms = pars6, method = "euler")
+out_control <- ode(y = state6, times = t, func = fish_func6, parms = pars_control, method = "euler")
+out_restored <- ode(y = state6, times = t, func = fish_func6, parms = pars_restored, method = "euler")
+out_urban <- ode(y = state6, times = t, func = fish_func6, parms = pars_urban, method = "euler")
 # the method used to solve the ODE matters for the results
 ```
 
 ```{r}
-plot(fp6_out)
+plot(out_control)
 ```
 
 ```{r}
-fp_df6 <- as.data.frame(fp6_out)
+plot(out_restored)
 ```
+
+```{r}
+plot(out_urban)
+```
+
+
+```{r}
+df_control <- as.data.frame(out_control)
+df_restored <- as.data.frame(out_restored)
+df_urban <- as.data.frame(out_urban)
+
+fish_catch <- df_control %>% 
+  dplyr::select(time, catch) %>% 
+  dplyr::rename(Current = catch) %>% 
+  mutate(Restored = df_restored$catch, Urban = df_urban$catch) %>% 
+  gather('Current', 'Restored', 'Urban', key = "Scenario", value = "Density")
+  
+```
+
+
+```{r}
+# Make a fish time series plot
+
+fish_plot <- ggplot(data = fish_catch, aes(x = time, y = Density, col= Scenario)) +
+  geom_line() +
+  guides(fill=FALSE) +
+  labs(title = "Modeled Mugil cephalus Density in He'eia Fishpond", x = "Time (Years)", y = as.expression(bquote(Density (g/m^3)))) +
+  theme(axis.text.x= element_text(size = 8, hjust = .2), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5), legend.title.align = 0.5)
+
+fish_plot
+```
+
+```{r}
+# create a data frame of fishpond water column output to use in a figure
+fp_df <- df_control %>% 
+  dplyr::select(time, No_fp, Na_fp, Ni_fp, alg, fish) %>% 
+  gather('No_fp', 'Na_fp', 'Ni_fp', 'alg', 'fish', key = "species", value = "concentration")
+
+neworder <- c('No_fp', 'Na_fp', 'Ni_fp', 'alg', 'fish')
+
+fp_df2 <- arrange(transform(fp_df,
+             species=factor(species,levels=neworder)),species)
+```
+
+
+```{r}
+
+fp_plot <- ggplot(data = fp_df2, aes(x = time, y = concentration, col = species)) +
+  facet_wrap(~species, scales = "free_y", 
+                strip.position = "left", 
+                labeller = as_labeller(c(alg = "Algae (mg Chla/L)", fish = "Fish (g/m^2)", Na_fp = "Ammonium-N (mg/L)", Ni_fp = "Nitrate-N (mg/L)", No_fp = "Organic N (mg/L)"))) +
+  geom_line() +
+  labs(title = "Model Outputs in He'eia Fishpond Water Column\n", x = "Time (Years)") +
+  ylab(NULL) +
+  theme(axis.text.x= element_text(size = 8, hjust = .2), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5), strip.background = element_blank(),
+           strip.placement = "outside", legend.position = "none") 
+fp_plot
+```
+
 
 ```{r}
 # Make a nice ggplot with desired content
-fp_water6 <- fp_df6 %>% 
+fp_water_df <- df_control %>% 
   dplyr::select(time, No_fp, Na_fp, Ni_fp) %>% 
   gather('No_fp', 'Na_fp', 'Ni_fp', key = "nitrogen", value = "concentration")
 
-n_fp6_plot <- ggplot(data = fp_water6, aes(x = time, y = concentration, col=nitrogen)) +
+n_fp6_plot <- ggplot(data = fp_water_df, aes(x = time, y = concentration, col=nitrogen)) +
   geom_line() +
   guides(fill=FALSE) +
   labs(title = "Modeled Nitrogen Compounds in He'eia Fishpond Water Column\n Time Step = 6 h", x = "Time (Years)", y = "Concentration (mg/L)") +
@@ -375,9 +558,9 @@ nitrate_data <- heeia_data %>%
   dplyr::select(date, statistic, nitrate) %>% 
   filter(statistic == "Mean" | statistic == "Stdv" | statistic == "N") %>% 
   spread(key = statistic, value = "nitrate") %>% 
-  rename(nit_mean = Mean, nit_sd = Stdv) %>% 
+  dplyr::rename(nit_obs = Mean, nit_sd = Stdv) %>% 
   mutate(nit_se = nit_sd / sqrt(N)) %>% 
-  mutate(day_ct = 0) %>% 
+  mutate(day_ct = 0, nit_var = nit_sd^2) %>% 
   na.omit()
 
   for (i in 3:length(nitrate_data$day_ct)){
@@ -388,11 +571,11 @@ ammonium_data <- heeia_data %>%
   dplyr::select(date, statistic, ammonia) %>% 
   filter(statistic == "Mean" | statistic == "Stdv" | statistic == "N") %>% 
   spread(key = statistic, value = "ammonia") %>% 
-  rename(amm_mean = Mean, amm_sd = Stdv) %>% 
+  dplyr::rename(amm_obs = Mean, amm_sd = Stdv) %>% 
   mutate(amm_se = amm_sd / sqrt(N)) %>% 
-  mutate(day_ct = 0) %>% 
+  mutate(day_ct = 0, amm_var = amm_sd^2) %>% 
   na.omit() %>% 
-  filter(amm_mean != max(amm_mean)) # removed an outlier, could be related to a storm event. Could remove this line to add
+  filter(amm_obs != max(amm_obs)) # removed an outlier, could be related to a storm event. Could remove this line to add
 
   for (i in 3:length(ammonium_data$day_ct)){
     ammonium_data$day_ct[i-1] = ammonium_data$day_ct[i-2] + as.integer(ammonium_data$date[i]-ammonium_data$date[i-1])
@@ -402,67 +585,62 @@ ammonium_data <- heeia_data %>%
 
 
 ```{r}
-nitrate_data_plot <- ggplot(data = nitrate_data, aes(x = date, y = nit_mean)) +
-  geom_point(col = 'blue') +
-  geom_errorbar(aes(ymin=nit_mean-nit_se, ymax=nit_mean+nit_se), width=.1, col = 'blue') +
-  geom_line(linetype = "dashed", col = 'blue') +
-  labs(title='Nitrate Concentrations in He‘eia Fishpond 2014-2015', x = 'Sampling Date', y = 'Concentration (mg/L)') +
-  guides(fill = FALSE) +
-  theme(axis.text.x= element_text(size = 8), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5)) 
-
-nitrate_data_plot
-```
-
-```{r}
-
-ammonia_data_plot <- ggplot(data = ammonium_data, aes(x = date, y = amm_mean)) +
-  geom_point(col = 'magenta') +
-  geom_errorbar(aes(ymin=amm_mean-amm_se, ymax=amm_mean+amm_se), width=.1, col = 'magenta') +
-  geom_line(linetype = "dashed", col = 'magenta') +
-  labs(title='Ammonium Concentrations in He‘eia Fishpond 2014-2015', x = 'Sampling Date', y = 'Concentration (mg/L)') +
-  guides(fill=FALSE) +
-  theme(axis.text.x= element_text(size = 8), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5))
-
-ammonia_data_plot
-```
-
-```{r}
-fp_nitrate6 <- fp_water6 %>% 
+fp_nitrate6 <- fp_water_df %>% 
   filter(nitrogen == "Ni_fp")
 
-fp_ammonium6 <- fp_water6 %>% 
+fp_ammonium6 <- fp_water_df %>% 
   filter(nitrogen == "Na_fp")
 ```
 
 ```{r}
 # try to compare first year of modeled fishpond nitrate to the 2014-2015 fishpond water nitrate data
-fp_nitrate_y1 <- fp_water6 %>% filter(nitrogen == "Ni_fp") %>% 
-  filter(time >= 0 & time < 1)
+fp_nitrate_y1 <- fp_water_df %>% filter(nitrogen == "Ni_fp") %>% 
+  filter(time >= 0 & time < 1.15)
 
 
-nitate_combo_y1 = ggplot(data = fp_nitrate_y1, aes(x = time, y = concentration)) +geom_line(col = 'green') + geom_point(data = nitrate_data, aes(x = day_ct/365, y = nit_mean),colour='blue')
+nitate_combo_y1 = ggplot() + 
+  geom_point(data = nitrate_data, aes(x = day_ct, y = nit_obs),colour='blue') +
+  geom_errorbar(data = nitrate_data, aes(x = day_ct, ymin=nit_obs-nit_sd, ymax=nit_obs+nit_sd), width=3, col='blue') +
+  geom_line(data = fp_nitrate_y1, aes(x = time*365, y = concentration), col = 'green') +
+  labs(x = 'Time (Days)', y = 'Concentration (mg/L)') +
+  guides(fill=guide_legend()) +
+  theme(axis.text.x= element_text(size = 8), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5))
+  
 
 nitate_combo_y1
 ```
 
 ```{r}
 # compare to year 80 of modeled fishpond nitrate to the 2014-2015 fishpond water nitrate data
-fp_nitrate_y45 <- fp_water6 %>% filter(nitrogen == "Ni_fp") %>% 
-  filter(time >= 45 & time < 46)
+fp_nitrate_y20 <- fp_water_df %>% filter(nitrogen == "Ni_fp") %>% 
+  filter(time >= 19 & time < 20.15)
 
+  
+nitate_combo_y20 = ggplot() + 
+  geom_point(data = nitrate_data, aes(x = day_ct, y = nit_obs),colour='blue') +
+  geom_errorbar(data = nitrate_data, aes(x = day_ct, ymin=nit_obs-nit_sd, ymax=nit_obs+nit_sd), width=3, col='blue') +
+  geom_line(data = fp_nitrate_y20, aes(x = (time-19)*365, y = fp_nitrate_y20$concentration), col = 'green') +
+  labs(x = 'Time (Days)', y = 'Concentration (mg/L)') +
+  guides(fill=guide_legend()) +
+  theme(axis.text.x= element_text(size = 8), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5))
 
-nitate_combo_y45 = ggplot(data = fp_nitrate_y45, aes(x = time, y = concentration)) +geom_line(col = 'green') + geom_point(data = nitrate_data, aes(x = day_ct/365+45, y = nit_mean),colour='blue')
-
-nitate_combo_y45
+nitate_combo_y20
 ```
 
 ```{r}
 # compare to year 1 of modeled fishpond ammonium N to the 2014-2015 fishpond water ammonium data
-fp_amm_y1 <- fp_water6 %>% filter(nitrogen == "Na_fp") %>% 
-  filter(time >= 0 & time < 1)
+fp_amm_y1 <- fp_water_df %>% filter(nitrogen == "Na_fp") %>% 
+  filter(time >= 0 & time < 1.15)
 
+ggplot(data = fp_amm_y1, aes(x = time, y = concentration)) +geom_line(col = 'red')
 
-amm_combo_y1 = ggplot(data = fp_amm_y1, aes(x = time, y = concentration)) +geom_line(col = 'red') + geom_point(data = ammonium_data, aes(x = day_ct/365, y = amm_mean),colour='magenta')
+amm_combo_y1 = ggplot() + 
+  geom_line(data = fp_amm_y1, aes(x = time*365, y = fp_amm_y1$concentration), col = 'red') + 
+  geom_point(data = ammonium_data, aes(x = day_ct, y = amm_obs),col='magenta') +
+  geom_errorbar(data = ammonium_data, aes(x = day_ct, ymin=amm_obs-amm_sd, ymax=amm_obs+amm_sd), width=3, col='magenta') +
+  labs(x = 'Time (Days)', y = 'Concentration (mg/L)') +
+  guides(fill=guide_legend()) +
+  theme(axis.text.x= element_text(size = 8), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5))
 
 amm_combo_y1
 ```
@@ -470,37 +648,142 @@ amm_combo_y1
 
 ```{r}
 # compare to year 80 of modeled fishpond ammonium N to the 2014-2015 fishpond water ammonium data
-fp_amm_y45 <- fp_water6 %>% filter(nitrogen == "Na_fp") %>% 
-  filter(time >= 45 & time < 46)
+fp_amm_y20 <- fp_water_df %>% filter(nitrogen == "Na_fp") %>% 
+  filter(time >= 19 & time < 20.15)
 
 
-amm_combo_y45 = ggplot(data = fp_amm_y45, aes(x = time, y = concentration)) +geom_line(col = 'red') + geom_point(data = ammonium_data, aes(x = day_ct/365+45, y = amm_mean),colour='magenta')
+amm_combo_y20 = ggplot() +
+  geom_line(data = fp_amm_y20, aes(x = (time-19)*365, y = fp_amm_y20$concentration), col = 'red') + 
+  geom_point(data = ammonium_data, aes(x = day_ct, y = amm_obs),col='magenta') +
+  geom_errorbar(data = ammonium_data, aes(x = day_ct, ymin=amm_obs-amm_sd, ymax=amm_obs+amm_sd), width=3, col='magenta') +
+  labs(x = 'Time (Days)', y = 'Concentration (mg/L)') +
+  theme(axis.text.x= element_text(size = 8), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5))
 
-amm_combo_y45
+amm_combo_y20
 ```
 
+Prepare the data to do the MSE analysis
 ```{r}
 # need to average 4 times steps to get the average for that day. Assign a day number in integer form that can be compared against the days where there is data. Then make calculate MSE or some other metric for comparison
 
 # create daily averages for nitrate concentrations modeled in the fishpond water
-fp_nit_day <- data.frame(day = seq(1,365*years),
-                         concentration = 0)
+fp_nit_day <- data.frame(day_ct = seq(1,365*years),
+                         nit_pred = 0)
 
 for (i in 1:length(fp_nit_day$day)){
-  fp_nit_day$concentration[i] =  (fp_nitrate6$concentration[i]+fp_nitrate6$concentration[i+1]+ fp_nitrate6$concentration[i+2]+fp_nitrate6$concentration[i+3])/4
+  fp_nit_day$nit_pred[i] =  (fp_nitrate6$concentration[i]+fp_nitrate6$concentration[i+1]+ fp_nitrate6$concentration[i+2]+fp_nitrate6$concentration[i+3])/4
 }
 
 # create daily averages for ammonium concentrations modeled in the fishpond water
-fp_amm_day <- data.frame(day = seq(1,365*years),
-                         concentration = 0)
+fp_amm_day <- data.frame(day_ct = seq(1,365*years),
+                         amm_pred = 0)
 
 for (i in 1:length(fp_amm_day$day)){
-  fp_amm_day$concentration[i] =  (fp_ammonium6$concentration[i]+fp_ammonium6$concentration[i+1]+ fp_ammonium6$concentration[i+2]+fp_ammonium6$concentration[i+3])/4
+  fp_amm_day$amm_pred[i] =  (fp_ammonium6$concentration[i]+fp_ammonium6$concentration[i+1]+ fp_ammonium6$concentration[i+2]+fp_ammonium6$concentration[i+3])/4
 }
 
 # for days outside of the data range of the first year, need to do some kind of offset (subtract 365*# of years different from the first year)
 
 ```
 
+```{r}
+amm_mse_df <- merge(ammonium_data, fp_amm_day, by = "day_ct")
+nit_mse_df <- merge(nitrate_data, fp_nit_day, by = "day_ct")
 
+amm_mse = MSE(y_pred = amm_mse_df$amm_pred, y_true = amm_mse_df$amm_obs)
+nit_mse = MSE(y_pred = nit_mse_df$nit_pred, y_true = nit_mse_df$nit_obs)
 
+amm_mse
+nit_mse
+
+# Nash-Sutcliffe Efficiency (NSE) is considered teh normalized MSE
+# NSE = 1 - ( sum( (obs - sim)^2 ) / sum( (obs - mean(obs))^2 )
+#Nash-Sutcliffe efficiencies range from -Inf to 1. Essentially, the closer to 1, the more accurate the model is. 
+#-) NSE = 1, corresponds to a perfect match of modelled to the observed data. 
+#-) NSE = 0, indicates that the model predictions are as accurate as the mean of the observed data, 
+#-) -Inf < NSE < 0, indicates that the observed mean is better predictor than the model.
+
+amm_var_mean = mean(amm_mse_df$amm_var)
+nit_var_mean = mean(nit_mse_df$nit_var)
+
+amm_nse = 1 - (amm_mse/amm_var_mean)
+nit_nse = 1 - (nit_mse/nit_var_mean)
+
+amm_nse # problematic that this is negative
+nit_nse # probelmatic that this isn't that close to 1
+
+# NSE seems to be used extensively in hydrologic models
+
+# just by removing the outlier in the ammonium data set, the NSE went from  -1.138588 to 0.575
+```
+
+Total food production from the He‘eia IAAS
+
+Agriculture production
+
+```{r}
+current_taro = 7300 # current area (m^2) in taro production
+
+banana_area = 50181 # area (m^2) producing banana in 20 years
+breadfruit_area = 50181 # area (m^2) producing breadfruit in 20 years
+taro_area = 125453 # area (m^2) producing taro in 20 years
+
+banana_yield = 1.49 # mean of 0.58-2.39 kg/yr from Bremer, et al (2018)
+breadfruit_yield = 1.32 # mean of 0.20-2.43 kg/yr from Bremer, et al (2018)
+taro_yield = 1.46 # mean of 1.12-1.79 kg/yr from Bremer, et al (2018)
+
+taro_current_mass = current_taro*taro_yield
+
+banana_mass = banana_area*banana_yield
+breadfruit_mass = breadfruit_area*breadfruit_yield
+taro_restored_mass = taro_area*taro_yield
+
+```
+
+Examine 10 year intervals for all land use scenarios. In the case of the restored scenario, the 10 years begin after 20 years of restoration are completed. Similarly for the urban land use scenario, the nitrogen loading used throughout the evaluated 10 year interval is constant, representing the loading from complete urbanization of the present.
+
+```{r}
+# extract the last value for the fish density in each land use scenario and multiply by He‘eia Fishpond's volume to get the mass in grams and convert to metric tons
+current_fish <- df_control %>% 
+  dplyr::select(time, catch) %>% 
+  filter(time > 9) %>% 
+  colSums() %>% 
+  as.data.frame()
+
+fish_ctrl = current_fish$.[2]*A_fp/10^6
+ # check if it should be V_fp or A_fp at the end
+restored_fish <- df_restored %>% 
+  dplyr::select(time, catch) %>% 
+  filter(time > 9) %>% 
+  colSums() %>% 
+  as.data.frame()
+
+fish_rst = restored_fish$.[2]*A_fp/10^6
+
+urban_fish <- df_urban %>% 
+  dplyr::select(time, catch) %>% 
+  filter(time > 9) %>% 
+  colSums() %>% 
+  as.data.frame()
+
+fish_urb = urban_fish$.[2]*A_fp/10^6
+```
+
+```{r}
+
+# create a dataset of the different crop data
+Crop=c(rep("Taro", 3) , rep("Banana", 3) , rep("Breadfruit", 3) , rep("Fish", 3) )
+Scenario =rep(c("Current" , "Restored" , "Urban") , 4)
+Mass=c(taro_current_mass/1000, taro_restored_mass/1000, 0, 0, banana_mass/1000, 0, 0, breadfruit_mass/1000, 0, fish_ctrl, fish_rst, fish_urb)
+crop_data=data.frame(Crop,Scenario,Mass)
+
+# Stacked
+ggplot(crop_data, aes(fill = Crop, y=Mass, x=Scenario)) + 
+    geom_bar(stat="identity") +
+    #scale_fill_discrete_qualitative(palette = "Cold") +
+    guides(fill=guide_legend()) +
+    labs(y = "Mass (Metric Tons)", x = "Land Use Scenario") +
+    theme(axis.text.x= element_text(size = 8, hjust = .2), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5), legend.title.align = 0.5)
+```
+
+What if you were instead going to do a time series of 10 or 20 years from current conditions to either restored or urban conditions and you add a linear proportion of what the loading is supposed to increase by with each successive year?

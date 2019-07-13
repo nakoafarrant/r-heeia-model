@@ -809,7 +809,7 @@ amm_combo_y45
 # need to average 4 times steps to get the average for that day. Assign a day number in integer form that can be compared against the days where there is data. Then make calculate MSE or some other metric for comparison
 
 # create daily averages for nitrate concentrations modeled in the fishpond water
-fp_nit_day <- data.frame(day = seq(1,365*years),
+fp_nit_day <- data.frame(day_ct = seq(1,365*years),
                          concentration = 0)
 
 for (i in 1:length(fp_nit_day$day)){
@@ -817,7 +817,7 @@ for (i in 1:length(fp_nit_day$day)){
 }
 
 # create daily averages for ammonium concentrations modeled in the fishpond water
-fp_amm_day <- data.frame(day = seq(1,365*years),
+fp_amm_day <- data.frame(day_ct = seq(1,365*years),
                          concentration = 0)
 
 for (i in 1:length(fp_amm_day$day)){
@@ -840,9 +840,6 @@ The changing volume approach didn't seem to work. The volume continuously increa
 
 
 # 6-Hour Time Step: Model Equations (with variable fishpond volume)
-
-
-
 
 
 extra code for later
