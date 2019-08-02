@@ -33,11 +33,6 @@ Winf_mugil = a_mugil*Linf_mugil^b_mugil # asymptotic weight using length-weight 
 M_mugil = M_empirical(Linf = Linf_mugil, K_l = K_mugil, method = "Then_growth") # [1/year]
 ```
 
-```{r}
-# initialize a year counter to be used later
-yr_ct = 0
-```
-
 
 # 6-Hour Time Step: Model Equations
 Realized that running into issues with the stream and tide specifications that are determined based on the value of t and need to be adjusted based on the time step being taken
@@ -167,17 +162,18 @@ fish_func6 <- function(t, state6, pars6) {
        Q_st = 3500/4 # average stream flow during this period
     }
     
-    # Use the number of years that have passed to determine the nitrogren loading based on the relative changes in the land use to the other land uses from the current condition
-    W_No = (LU_No + No_inc*yr_ct)*Q_st
-    W_Na = (LU_Na + Na_inc*yr_ct)*Q_st
-    W_Ni = (LU_No + Ni_inc*yr_ct)*Q_st
+    # the current year is defined as the rounded down integer year value of the current time step
+    yr_curr = floor(t)
     
-    # update the year counter when 365 days have passed
-    if(step %% 365 == 0)
-      yr_ct = yr_ct+1
+    # Use the number of years that have passed to determine the nitrogren loading based on the relative changes in the land use to the other land uses from the current condition
+    W_No = (LU_No + No_inc*yr_curr)*Q_st
+    W_Na = (LU_Na + Na_inc*yr_curr)*Q_st
+    W_Ni = (LU_Ni + Ni_inc*yr_curr)*Q_st
+
+    # the above loading doesn't seem to be an issue for the different scenarios but it's possible that the model is not sensitive to the current differences in nitrogen input
     
   # Stream organic N
-  dNo_st <- (W_No- Q_st*No_st+(-k_oa*No_st + k_ao*Na_st)*V_st)/V_st
+  dNo_st <- (W_No - Q_st*No_st+(-k_oa*No_st + k_ao*Na_st)*V_st)/V_st
   #dNo_st <- LU_No*exp(-k_oa/Q_st*l_st) + LU_Na*exp(k_ao/Q_st*l_st)
   # Stream ammonium
   dNa_st <- (W_Na - Q_st*Na_st+(k_oa*No_st-(k_ao+k_nit+k_av)*Na_st + k_nit_red*Ni_st)*V_st)/V_st
@@ -204,14 +200,19 @@ fish_func6 <- function(t, state6, pars6) {
            alg
   
   # Fish density
+  
+  # define catch rate
   if(step < 365*4)
-    catch = 0
+    catch = 0 # No harvests during the first 4 years after stocking to allow the initial population to mature
   else
-    catch = k_catch
+    catch = k_catch # after the first 4 years, harvest at the defined first order rate
   
   dfish <- (k_fg - k_fd - catch)*fish # question the parentheses location from a units perspective
   #dfish <- k_fg*fish*(1-fish/carrying)
   dcatch = catch*fish*A_fp/1000 # catch in kg (was originally in grams/m^2)
+  
+
+  
   return(list(c(No_st = dNo_st, Na_st = dNa_st, Ni_st = dNi_st, No_fp = dNo_fp, Na_fp = dNa_fp, Ni_fp = dNi_fp, No_sd = dNo_sd, Na_sd = dNa_sd, Ni_sd = dNi_sd, alg = dalg, fish = dfish, catch = dcatch)))
 
 })
@@ -222,6 +223,8 @@ fish_func6 <- function(t, state6, pars6) {
 ```{r}
 years = 20
 t <- seq(0, years, by = 1/365/4) # 6 hour time step
+
+yr_ct <- rep(1:years, each = 365*4)
 
 # define physical parameters of ecosystem 
 h_st = 0.5 # [m] average depth of stream 
@@ -276,7 +279,7 @@ pars_control <- c(
       #k_fg = K_mugil/365/4, # rate of fish growth [1/6hr], K_mugil = 0.27
       # based on doubling time of 1.4-4.4 years, r_growth = ln(2)/1.4 = 0.495 /yr to ln(2)/4.4 = 0.158 /yr, prior r (whatever that means) is 0.51
       k_fd = M_mugil/365/4, # [1/6hr] rate of fish death from empirical Then formula, M_mugil = 0.346
-      k_catch = M_mugil/365/4, # could be 0.343 based on Mexico study. file:///Users/Nakoa/Downloads/2016GallardoetalfisherydeMugelcephalusJMBO-5-151.pdf
+      k_catch = 2*M_mugil/365/4, # could be 0.343/yr based on Mexico study. file:///Users/Nakoa/Downloads/2016GallardoetalfisherydeMugelcephalusJMBO-5-151.pdf
       # fishbase also says you generally want Exploitation E to be about 0.5 which is F/Z = F/(F+M) so M and F should be approximately equal ideally for MSY
       # From Barman, Jana, Garg, Bhatnagar, https://link.springer.com/article/10.1007/s10499-004-2479-5
       # growth rate for M. cephalus in salinity 20 ppt 0.69 g/d or 0.67 g/d in 25 ppt
@@ -301,7 +304,7 @@ pars_restored <- c(
       Na_inc = 0.009,
       Ni_inc = 0.009,
       
-       carrying = 56, # [g/m^2] carrying capacity for fish in He‘eia Fishpond, 500 pounds per acre
+      carrying = 56, # [g/m^2] carrying capacity for fish in He‘eia Fishpond, 500 pounds per acre
       
       k_oa = 0.01/4, # [1/6hr] conversion of organic N to ammonium N
       k_ao = 0.1/4, # [1/6hr] conversion of ammonium N to organic N 
@@ -326,10 +329,10 @@ pars_restored <- c(
       k_ad = 0.09/4, # [1/6hr] rate of algae death, Jamu and Piedrahita, 0.01-0.09 1/d range
       k_ac = 0.08, # expect M. cephalus to consume ~8% of it's body weight in food, De Silva & Perera 
       k_fg = 0.27/365/4, # [1/6hr]
-      #k_fg = K_mugil/365/4, # rate of fish growth [1/6hr], K_mugil = 0.27
+      #k_fg = K_m*ugil/365/4, # rate of fish growth [1/6hr], K_mugil = 0.27
       # based on doubling time of 1.4-4.4 years, r_growth = ln(2)/1.4 = 0.495 /yr to ln(2)/4.4 = 0.158 /yr, prior r (whatever that means) is 0.51
       k_fd = M_mugil/365/4, # [1/6hr] rate of fish death from empirical Then formula, M_mugil = 0.346
-      k_catch = M_mugil/365/4, # could be 0.343 based on Mexico study. file:///Users/Nakoa/Downloads/2016GallardoetalfisherydeMugelcephalusJMBO-5-151.pdf
+      k_catch = 2*M_mugil/365/4, # could be 0.343/yr based on Mexico study. file:///Users/Nakoa/Downloads/2016GallardoetalfisherydeMugelcephalusJMBO-5-151.pdf
       # fishbase also says you generally want Exploitation E to be about 0.5 which is F/Z = F/(F+M) so M and F should be approximately equal ideally for MSY
       # From Barman, Jana, Garg, Bhatnagar, https://link.springer.com/article/10.1007/s10499-004-2479-5
       # growth rate for M. cephalus in salinity 20 ppt 0.69 g/d or 0.67 g/d in 25 ppt
@@ -381,7 +384,7 @@ pars_urban <- c(
       #k_fg = K_mugil/365/4, # rate of fish growth [1/6hr], K_mugil = 0.27
       # based on doubling time of 1.4-4.4 years, r_growth = ln(2)/1.4 = 0.495 /yr to ln(2)/4.4 = 0.158 /yr, prior r (whatever that means) is 0.51
       k_fd = M_mugil/365/4, # [1/6hr] rate of fish death from empirical Then formula, M_mugil = 0.346
-      k_catch = M_mugil/365/4, # could be 0.343 based on Mexico study. file:///Users/Nakoa/Downloads/2016GallardoetalfisherydeMugelcephalusJMBO-5-151.pdf
+      k_catch = 2*M_mugil/365/4, # could be 0.343 based on Mexico study. file:///Users/Nakoa/Downloads/2016GallardoetalfisherydeMugelcephalusJMBO-5-151.pdf
       # fishbase also says you generally want Exploitation E to be about 0.5 which is F/Z = F/(F+M) so M and F should be approximately equal ideally for MSY
       # From Barman, Jana, Garg, Bhatnagar, https://link.springer.com/article/10.1007/s10499-004-2479-5
       # growth rate for M. cephalus in salinity 20 ppt 0.69 g/d or 0.67 g/d in 25 ppt
@@ -447,7 +450,7 @@ state6 <- c(
            # range of conversion factors [g alg/g Chla] from Chapra 0.005-0.025. Would be 0.12 g/m^2 algae if used 0.005
            # Using conversion factor from Chapra
            fish = 10, # [g/m^2] initial ‘ama‘ama  density
-           catch = 0) 
+           catch = 0)
 
 # According to Mohlenkamp et al. 2019, from 2006-2009, Paepae o He'eia produced ~1.2 metric tons of moi (Pacific Threadfin) which is about 400 kg per year
 
@@ -469,13 +472,13 @@ state6 <- c(
 
 ```
 
-
 ```{r}
 out_control <- ode(y = state6, times = t, func = fish_func6, parms = pars_control, method = "euler")
 out_restored <- ode(y = state6, times = t, func = fish_func6, parms = pars_restored, method = "euler")
 out_urban <- ode(y = state6, times = t, func = fish_func6, parms = pars_urban, method = "euler")
 # the method used to solve the ODE matters for the results
 ```
+
 
 ```{r}
 plot(out_control)
@@ -499,6 +502,12 @@ fish_catch <- df_control %>%
   dplyr::select(time, catch) %>% 
   dplyr::rename(Current = catch) %>% 
   mutate(Restored = df_restored$catch, Urban = df_urban$catch) %>% 
+  gather('Current', 'Restored', 'Urban', key = "Scenario", value = "Mass")
+
+fish_dens <- df_control %>% 
+  dplyr::select(time, fish) %>% 
+  dplyr::rename(Current = fish) %>% 
+  mutate(Restored = df_restored$fish, Urban = df_urban$fish) %>% 
   gather('Current', 'Restored', 'Urban', key = "Scenario", value = "Density")
   
 ```
@@ -507,14 +516,38 @@ fish_catch <- df_control %>%
 ```{r}
 # Make a fish time series plot
 
-fish_plot <- ggplot(data = fish_catch, aes(x = time, y = Density, col= Scenario)) +
+catch_plot <- ggplot(data = fish_catch, aes(x = time, y = Mass, col= Scenario)) +
   geom_line() +
   guides(fill=FALSE) +
   facet_wrap(~Scenario) +
-  labs(title = "Modeled Mugil cephalus Density in He'eia Fishpond", x = "Time (Years)", y = as.expression(bquote(Density (g/m^3)))) +
+  labs(title = "Modeled ‘Ama‘ama Catch From He'eia Fishpond", x = "Time (Years)", y = as.expression(bquote(Density (g/m^3)))) +
   theme(axis.text.x= element_text(size = 8, hjust = .2), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5), legend.title.align = 0.5)
 
-fish_plot
+catch_plot
+```
+```{r}
+# Make a fish time series plot
+
+catch_plot2 <- ggplot(data = fish_catch, aes(x = time, y = Mass, col= Scenario)) +
+  geom_line() +
+  guides(fill=FALSE) +
+  labs(title = "Modeled ‘Ama‘ama Catch From He'eia Fishpond", x = "Time (Years)", y = as.expression(bquote(Density (g/m^3)))) +
+  theme(axis.text.x= element_text(size = 8, hjust = .2), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5), legend.title.align = 0.5)
+
+catch_plot2
+```
+
+```{r}
+# Make a fish time series plot
+
+fish_dens_plot <- ggplot(data = fish_dens, aes(x = time, y = Density, col= Scenario)) +
+  geom_line() +
+  guides(fill=FALSE) +
+  facet_wrap(~Scenario) +
+  labs(title = "Modeled ‘Ama‘ama Density In He'eia Fishpond", x = "Time (Years)", y = as.expression(bquote(Density (g/m^3)))) +
+  theme(axis.text.x= element_text(size = 8, hjust = .2), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5), legend.title.align = 0.5)
+
+fish_dens_plot
 ```
 
 ```{r}
