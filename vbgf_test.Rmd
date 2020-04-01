@@ -53,8 +53,8 @@ Winf_chanos = a_chanos*Linf_chanos^b_chanos # grams
 
 Linf_mugil = 60 # cm, was 100cm, could also be 63 which is the mean of fishbase.60 top length of adults in Hawai'i was around 50cm but could bumped up to 
 K_mugil = 0.27 # 1/year and could be 0.24 which is the geometric mean of fishbase
-a_mugil = 0.0321 # was 0.0085 for overall fishbase sample. 
-b_mugil = 3.0 
+a_mugil = 0.032 # This a is specific to M. cephalus in Hawai'i estuaries (Peyton, et al. 2015). Overall fishbase was a = 0.0085
+b_mugil = 3.03 
 Winf_mugil = a_mugil*Linf_mugil^b_mugil # grams
 # when using Linf = 100cm and a_mugil= 0.0085, Winf = 8500
 # reported lengths from hawai'i estuary sample go to 51.6cm and weights of 1800 g
@@ -89,19 +89,13 @@ Lopt_mugil = Linf_mugil*(3/(3+M_mugil/K_mugil))
 ```{r}
 mugil_list <- list(Winf = Winf_mugil, K = K_mugil, t0 = t0_mugil, M = M_mugil, tr = 2)
 
-mugil_pred <- predict_mod(mugil_list, FM_change = seq(0.3,0.4,0.1), tc_change = seq(2,4,1), type = 'ypr')  #where it is maximal  = MSY
+mugil_pred <- predict_mod(mugil_list, FM_change = seq(0,2,0.1), tc_change = seq(1,3,1), type = 'ypr')  #where it is maximal  = MSY
 
 plot(mugil_pred, xaxis1 = "FM", yaxis_iso = "Lc", yaxis1 = "Y_R", yaxis2 = "B_R", mark = TRUE, ylab1 = "Y/R", ylab2 = "B/R")
 
 # in the below graph with Y_R and B_R on yaxis 1 and 2, respectively, the biomass is just Y/R divided by fishing mortality
 ```
 
-
-```{r}
-data(hake)
-hake_vpa = VPA(hake, terminalE = 0.5, analysis_type = "VPA", plot = TRUE,
-catch_unit = "'000", plus_group = TRUE)
-```
 
 
 ```{r}
@@ -127,8 +121,8 @@ paste(round(avg_gr_4, 3)) # [g/6hr]
 # does the same mortality stuff from above
 
 library(fishmethods)
-Mchanos = M.empirical(Linf = Linf_chanos, Kl = K_chanos, method = 11)
-Mmugil = M.empirical(Linf = Linf_mugil, Kl = K_mugil, method = 11)
+#Mchanos = M.empirical(Linf = Linf_chanos, Kl = K_chanos, method = 11)
+#Mmugil = M.empirical(Linf = Linf_mugil, Kl = K_mugil, method = 11)
 
 paste("M.chanos =", as.numeric(Mchanos))
 paste("M.mugil =", as.numeric(Mmugil))
