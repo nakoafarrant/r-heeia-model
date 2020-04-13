@@ -31,7 +31,7 @@ library(FishLife)
 #by defaulth FishLife uses most-recent published database version. Includes both parameters from FishBase and stock-recruit parameters estimated using the RAM Legacy stock-recruit database
 
 # basic form that should use themost updated data
-Predict = Plot_taxa(Search_species(Genus="Mugil",Species = "cephalus")$match_taxonomy, mfrow=c(2,2))
+# Predict = Plot_taxa(Search_species(Genus="Mugil",Species = "cephalus")$match_taxonomy, mfrow=c(2,2))
 
 # the following code fails because it seems like the data base parameter doesn't work specifically for M. cephalus
 # only fishbase
@@ -44,9 +44,9 @@ Predict = Plot_taxa(Search_species(Genus="Mugil",Species = "cephalus")$match_tax
 ```{r}
 # for life-history parameters. These values are in log-space for all variables except Temperature, and converting to the predictive median can be accomplished by exponentiating those variables: :
 
-kable(Predict[[1]]$Mean_pred, digits=3, escape = T) %>% 
-  kable_styling("striped", full_width = F) %>% 
-  row_spec(1:20, color = "black")
+#kable(Predict[[1]]$Mean_pred, digits=3, escape = T) %>% 
+#  kable_styling("striped", full_width = F) %>% 
+#  row_spec(1:20, color = "black")
 ```
 
 
@@ -54,9 +54,9 @@ kable(Predict[[1]]$Mean_pred, digits=3, escape = T) %>%
 # or the predictive mean can be calculated by exponentiating and bias-correcting:
 # temperature is the 8th value in the Predict value (see Thorson 2020)
 
-knitr::kable(c(exp(Predict[[1]]$Mean_pred[-8]+0.5*diag(Predict[[1]]$Cov_pred)[-8]),Predict[[1]]$Mean_pred['Temperature']), digits=3, escape = F) %>% 
-  kable_styling("striped", full_width = F) %>% 
-  row_spec(1:20, color = "black")
+#knitr::kable(c(exp(Predict[[1]]$Mean_pred[-8]+0.5*diag(Predict[[1]]$Cov_pred)[-8]),Predict[[1]]$Mean_pred['Temperature']), digits=3, escape = F) %>% 
+#  kable_styling("striped", full_width = F) %>% 
+#  row_spec(1:20, color = "black")
 ```
 
 
@@ -202,18 +202,18 @@ fish_func6 <- function(t, state6, pars6) {
       #g_alg <- g_alg_max*L_light*L_N
       g_alg <- g_alg_max*L_N
       
-      # Stream organic N [g/m^3]  
+      # Stream organic N [g/m^3] 
       dNo_st <- (W_No - Q_st*No_st)/V_st -k_oa*No_st + k_ao*Na_st
       # Stream ammonium [g/m^3]  
       dNa_st <- (W_Na - Q_st*Na_st)/V_st + k_oa*No_st - (k_ao+k_nit+k_av)*Na_st + k_nit_red*Ni_st
       # Stream nitrate [g/m^3]  
       dNi_st <- (W_Ni- Q_st*Ni_st)/V_st + k_nit*Na_st - k_nit_red*Ni_st
       # Fishpond water organic N [g/m^3]  
-      dNo_fp <- (Q_st*No_st + Q_tide*(No_ocean-No_fp))/V_fp + (-k_oa-k_s)*No_fp+k_ao*Na_fp + k_r*No_sd
+      dNo_fp <- (Q_st*No_st + Q_tide*(No_ocean-No_fp))/V_fp + (-k_oa-k_s)*No_fp + k_ao*Na_fp + k_r*No_sd
       # Fishpond water ammonium [g/m^3]     
       dNa_fp <- (Q_st*Na_st + SGD_Na + Q_tide*(Na_ocean-Na_fp))/V_fp - k_oa*No_fp - (k_ao+k_nit+k_av+k_s)*Na_fp + k_r*Na_sd + ((-g_alg + k_ra)*alg + (eg + exc)*fish)/alg_CN/h_fp*(Na_fp/(Na_fp+Ni_fp))
       # Fishpond water nitrate [g/m^3]  
-      dNi_fp <- (Q_st*Ni_st + SGD_Ni + Q_tide*(Ni_ocean-Ni_fp))/V_fp + k_nit*Na_fp-k_s*Ni_fp+k_r*Ni_sd + ((-g_alg + k_ra)*alg + (eg + exc)*fish)/alg_CN/h_fp*(Ni_fp/(Na_fp+Ni_fp))
+      dNi_fp <- (Q_st*Ni_st + SGD_Ni + Q_tide*(Ni_ocean-Ni_fp))/V_fp + k_nit*Na_fp-k_s*Ni_fp+k_r*Ni_sd + (-g_alg + k_ra)*alg/alg_CN/h_fp*(Ni_fp/(Na_fp+Ni_fp))
       # Sediment organic N [g/m^3]   
       dNo_sd <- k_s*No_fp - (k_oa+k_b+k_r)*No_sd + k_ao*Na_sd + k_s*alg/alg_CN/h_fp*(No_fp/(Na_fp+No_fp))
       # Sediment ammonium [g/m^3]  
@@ -222,12 +222,17 @@ fish_func6 <- function(t, state6, pars6) {
       dNi_sd <- k_s*Ni_fp+k_nit_sed*Na_sd-(k_denit+k_nit_red+k_r+ k_b)*Ni_sd
       # Algae density [g/m^2]
       
-      Ing <- FA/alg_energy/alg*fish # [day^-1], ingestion rate of algae by fish based on M. cephalus anabolic requiements and energy density of algae
+      Ing <- FA/alg_energy # [g alg * g fish ^-1 * day^-1], ingestion rate of algae by fish based on M. cephalus anabolic requiements and energy density of algae
       
-        
+      dalg <- alg*(g_alg*(1-alg/K_alg) - k_s + k_ra) - Q_B*alg*fish/(alg + K_hs_fish)
+      
+      #dalg <- alg*(g_alg*(1-alg/K_alg) - k_s + k_ra) - Ing*alg*fish/(alg + K_hs_fish)
+      
+      
       #dalg <- (k_ag*(Na_fp+Ni_fp)/(k_SN+Na_fp+Ni_fp) -k_ra)*alg - FA*FB/alg_energy 
       # previously used the modifier of ingestion rate: dalg <- g_alg*alg - k_s*alg - k_ra*alg - 0.01*Ing*alg
-      dalg <- g_alg*alg - k_s*alg - k_ra*alg - 0.006*fish
+      
+      #dalg <- g_alg*alg - k_s*alg - k_ra*alg - Ing*alg # worked well with 0.006*fish to produce a model that made more sense
 
       # Ing needs a 0.01 or smaller multiplier in order for the model to run
       
@@ -235,9 +240,7 @@ fish_func6 <- function(t, state6, pars6) {
     
       # using a density dependent natural mortality rate for algae k_am*alg*alg = k_am*alg^2 see Franks (2002)
       
-      # How should settling algae enter the sediment? organic nitrogen or another form?
       
-      # FB increases as W increases but N also decreases. If N was at 5000 and weight reached Winf_chanos, then the last term in this equation would be - 9.39 which is more than the initial alg concentration
       # Algae stocking rate in M. cephalus hatchery experiment in Makapuu, HI would stock with 500,000 cells/mL of algae (phytoplankton Nannochloropsis oculata)
     
       # Fish density
@@ -276,35 +279,25 @@ fish_func6 <- function(t, state6, pars6) {
       
       #dfish <- FA/alg_energy/alg*fish^2 - M*fish^2 - catch_rate*fish^2 
       # dfish <- FCR*FA/alg_energy/alg*fish^2 - M*fish^2 - catch_rate*fish
-      #dN <- -(M+catch_rate)*N #+ R  # [number of fish/m^2] the number of fish per m^2
       # need to introduce some kind of reproduction or other increase in fish
       # dFE = (FA - FC)**N - (M+catch_rate)*FE # [kJ/day]  
-      #dfish <- FA/alg_energy/alg*fish^2*(1-fish/Fcarr) - M*fish^2 - catch_rate*fish^2 
       
       # assume general logistic growth for the fish population
       #dfish <- r_mugil*fish(1-fish/K_avg)
       # previously: dfish <- Ing*alg*fish*(1-fish/K_avg) - M_mugil*fish^2 - catch_rate*fish^2 
-      dfish <- Ing*alg*fish*(1-fish/(alg/Ing)) - M_mugil*fish - catch_rate*fish 
+      dfish <- 1/FCR*Ing*alg*fish/(alg + K_hs_fish)*(1-fish/K_avg) - M_mugil*fish - catch_rate*fish 
+      #dfish <- 1/FCR*Ing*alg*fish/(alg + K_hs_fish)*(1-fish/K_avg) - M_mugil*fish - catch_rate*fish 
+      
+      #dfish <- fish*((1/FCR)*Ing*alg/(w*fish + alg)*(1-fish/K_avg) - M_mugil - catch_rate)
       
       f_sgr = 1.02/4 # [6 hr^-1] Wassef, et al 2002. specific growth rate suggested 2% day^-1
-      #dfish <- f_sgr*fish*(1-fish/Fcarr) - M*fish^2 - catch_rate*fish^2 
-      #dfish <- K_mugil*(Winf_mugil-fish) - catch*fish # somewhat of a VBGF output
-      dcatch = catch_rate*fish*A_fp # if use "- catch" does it remove the catch from the previous year so it is just the current catch? This runs and need to think about the result more critically # do you need to add the new catch to the previous catch "+ catch" this doesn't seem to produce a functional result. When including this "+ catch" the equation produces weird negatie results
+      #dcatch = catch_rate*fish*A_fp # if use "- catch" does it remove the catch from the previous year so it is just the current catch? This runs and need to think about the result more critically # do you need to add the new catch to the previous catch "+ catch" this doesn't seem to produce a functional result. When including this "+ catch" the equation produces weird negatie results
       
       #dcatch = catch*fish*A_fp/1000 # catch in kg (was originally in grams/m^2)
       
-      # The below equations are from: Lorenzen, K. 2008 "Fish Population Regulation Beyond "Stock and   
-      # Recruitment": The Role of Density-dependent Growth in the Recruited Stock
-      #dLinf = Linf_mugil - g*B # biomass density dependent maximum length for VBGF
-      #dL = Linf - (Linf - L)*exp(-K_mugil) # biomass density dependent length for M. cephalus with VBGF
-      #dN = N*exp(-(Fc + M)) # population number
-      #dFc = Finf/(1 + exp(q*(L-Lc))) # fishing mortality given by logistic function of length
-      #dQ = 1/(1 + exp(p*(L-Lm))) # proportion of mature fish
-      #dB = a_mugil*(L^b_mugil)*N # total biomass of the population
-      #dS = a_mugil*(L^b_mugil)*N # spawner biomass of the population
     
       #g_a[step] <<- g_alg
-    return(list(c(No_st = dNo_st, Na_st = dNa_st, Ni_st = dNi_st, No_fp = dNo_fp, Na_fp = dNa_fp, Ni_fp = dNi_fp, No_sd = dNo_sd, Na_sd = dNa_sd, Ni_sd = dNi_sd, alg = dalg, fish = dfish, catch = dcatch)))
+    return(list(c(No_st = dNo_st, Na_st = dNa_st, Ni_st = dNi_st, No_fp = dNo_fp, Na_fp = dNa_fp, Ni_fp = dNi_fp, No_sd = dNo_sd, Na_sd = dNa_sd, Ni_sd = dNi_sd, alg = dalg, fish = dfish)))
 
 })
 }
@@ -312,7 +305,7 @@ fish_func6 <- function(t, state6, pars6) {
 
 # Model Specification
 ```{r}
-years = 1500
+years = 1000
 
 t <- seq(0, years, by = 1/365/4) # 6 hour time step
 
@@ -418,11 +411,28 @@ np_ebb = -159938/4
 
 # FISH CONSUMPTION ENERGY AND MASS PARAMETERS
 # 126 kJ gross energy (GE) / kg body weight for daily maintenance but 1446.7 kJ GE / kg BW is recommended for maximum growth
-FA = 1000/1000/4 # [kJ g fish^-1 6h^-1] energy consumed per gram of M. cephalus every 6 hours from FAO website says maximum growth rate is 1447 kJ/kg BW daily and 126 kJ/kg BW for maintenance
+FA = 1450/1000/4 # [kJ g fish^-1 6h^-1] energy consumed per gram of M. cephalus every 6 hours from FAO website says maximum growth rate is 1447 kJ/kg BW daily and 126 kJ/kg BW for maintenance
 alg_energy = 17.6 # [kJ g^-1 algae] energy per gram of Nannochloropsis spp. from Rebolloso-Fuentes, et al 2001
 # microplankton energy density 8 kJ g^-1 in Mediterranean (Barroeta, et al 2017). Whyte 1987 seems to further support ~8 kJ g^-1
 
+# estimate carrying capacity for phytoplankton. At minimum there has to be enough algae to support the historic fish yields
+# there were also possible sources of food so alg doesn't need to account for all of the calories consumed, but also need to account for inefficiencies in use of food that is consumed
+eff = 0.6 # one estimate of feed conversion efficiency for M. cephalus (assimilates 60% of the food it consumes)
+
+
+# not in love with the initial version of the calculation below. Might want to find a way to actually do it with the carrying capacit
+K_alg = historic_MSY_max*FA*365*4/eff/alg_energy # g alg / (m^2)
+
+K_hs_alg = 10^-8*10^10*10^-3 # g/m^2, half-saturation for plant uptake of nitrogen, suggested value from https://www.sciencedirect.com/science/article/pii/S2351989414000420 converted from kg/L to kg/km^2 to g/m^2. This is on some what of a simlar order of magnitude to the K_SN variable from before above
+
+K_hs_fish = 10^-7*10^10*10^-3 # g/m^2, half-saturation for fish consuming algae, suggested value from https://www.sciencedirect.com/science/article/pii/S2351989414000420 converted from kg/L to kg/km^2 to g/m^2
+
+
+Q_B <- 12.28/365/4 # 1/6hr, Fish-based derived consumption to biomass ratio for mugil cephalus
+  
 FCR = 4.6 # feed conversion ratio inputs/outputs [alg/fish]. average 3.6-5.6 for 3% and 5% BW feeding ratios. This at 4.6 FCR could be high compared to some other studies
+
+w = 10^-6 # half-saturation for M cephalus type II functional response for ingestion of algae
 
 w_avg = 1000 # [g] average weight of M. cephalus at adult age
 
@@ -526,8 +536,10 @@ state6 <- c(
            # range of conversion factors [g alg/g Chla] from Chapra 0.005-0.025. Would be 0.12 g/m^2 algae if used 0.005
            #N = 5000/A_fp,
            #FB = fingerling_mass*5000,
-           fish = 3.2, # [g/m^2] initial mullet  density (was 3.2)
-           catch = 0)
+           
+           fish = 3.2 # [g/m^2] initial mullet  density (was 3.2)
+           #catch = 0
+           )
 
 # According to Mohlenkamp et al. 2019, Paepae o He'eia produced ~1.2 metric tons of moi (Pacific Threadfin) from 2006-2009, which is about 400 kg per year
 # historical estimates for this fishpond max out around 15 metric tons (15,000 kg) with an asymptotic weight of 8.5 kg per striped mullet this would amount to ~1750 fully grown striped mullet.
@@ -703,10 +715,31 @@ urban scenario:
 # Again use updated K, F, and M values from FishLife in the same fish model that uses the Ing (ingestion) parameter, except remove the 0.01 modifier from the algae equation
 
 
+# changing the algae growth rate made a dramatic change to the system. It actually reduced the fish production rate some how 
+Found a new source that suggested a max growth rate for diatoms of 5.9 day^-1, which was considerably higher than the 1.5 day^-1 that I had been using for phytoplankton # https://www.hindawi.com/journals/jmb/2013/684739/
+
+The long-term output of the fish model didn't seem to be sensitive to changing the initial algae concentration by increasing from 0.5 to 1.5. virtually no change in the control fish output
+
+# tried a revised structure of the model using type II feeding approach
+major issue of the nitrogen concentrations being way too high in the fishpond water and sediment compartments
+control scenario
+1491.084
+1.688744, 0.1135783, 0.08141123
+9.423938e+187, 2.740911e+187, 3.013846e+187
+8.005332e+188, 6.639281e+188, 9.760706e+187
+2472.092
+97.61679
+14155856
+
+
+why is there a substantial increase in nitrogen concentration when algae density is also increasing? If anything, might have suspected the opposite
+- need to think about the interactions between the algae/fish and nitrogen equations
+
+# remove the fish components from this new structure of the model 
+equations seem more physically reasonable when the fish component is removed from the equation
+
 ```{r}
 plot(out_control)
-
-
 ```
 
 
@@ -716,7 +749,7 @@ plot(out_control)
 plot(out_restored)
 ```
 
-At 1500 years, everything seems stable
+
 ```{r}
 plot(out_urban)
 ```
@@ -962,13 +995,13 @@ fp_ammonium6 <- fp_water_df %>%
 ```{r}
 # try to compare first year of modeled fishpond nitrate to the 2014-2015 fishpond water nitrate data
 fp_nitrate_y1 <- fp_water_df %>% filter(nitrogen == "Ni_fp") %>% 
-  filter(time >= 1498 & time < 1500)
+  filter(time >= 998 & time < 1000)
 
 
 nitate_combo_y1 = ggplot() + 
   geom_point(data = nitrate_data_shift, aes(x = day_shft, y = nit_obs),colour='blue', show.legend = T) +
   geom_errorbar(data = nitrate_data_shift, aes(x = day_shft, ymin=nit_obs-nit_sd, ymax=nit_obs+nit_sd), width=3, col='blue', show.legend = T) +
-  geom_line(data = fp_nitrate_y1, aes(x = (time-1498)*365, y = concentration), col = 'green') +
+  geom_line(data = fp_nitrate_y1, aes(x = (time-998)*365, y = concentration), col = 'green') +
   labs(x = 'Time (Days)', y = 'Concentration (mg/L)') +
   guides(fill=guide_legend()) +
   theme(axis.text.x= element_text(size = 8), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5))
@@ -1016,11 +1049,11 @@ amm_combo_y1
 ```{r}
 # compare to year 80 of modeled fishpond ammonium N to the 2014-2015 fishpond water ammonium data
 fp_amm_y20 <- fp_water_df %>% filter(nitrogen == "Na_fp") %>% 
-  filter(time >= 1498 & time < 1500)
+  filter(time >= 998 & time < 1000)
 
 
 amm_combo_y20 = ggplot() +
-  geom_line(data = fp_amm_y20, aes(x = (time-1498)*365, y = concentration), col = 'red') + 
+  geom_line(data = fp_amm_y20, aes(x = (time-998)*365, y = concentration), col = 'red') + 
   geom_point(data = amm_data_shift, aes(x = day_shft, y = amm_obs),col='magenta') +
   geom_errorbar(data = amm_data_shift, aes(x = day_shft, ymin=amm_obs-amm_sd, ymax=amm_obs+amm_sd), width=3, col='magenta') +
   labs(x = 'Time (Days)', y = 'Concentration (mg/L)') +
