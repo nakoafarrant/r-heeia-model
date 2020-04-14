@@ -224,7 +224,7 @@ fish_func6 <- function(t, state6, pars6) {
       
       Ing <- FA/alg_energy # [g alg * g fish ^-1 * day^-1], ingestion rate of algae by fish based on M. cephalus anabolic requiements and energy density of algae
       
-      dalg <- alg*(g_alg*(1-alg/K_alg) - k_s + k_ra) - Q_B*alg*fish/(alg + K_hs_fish)
+      dalg <- alg*(g_alg*(1-alg/K_alg) - k_s + k_ra) - Ing*alg*fish/(alg + K_hs_fish)
       
       #dalg <- alg*(g_alg*(1-alg/K_alg) - k_s + k_ra) - Ing*alg*fish/(alg + K_hs_fish)
       
@@ -285,7 +285,7 @@ fish_func6 <- function(t, state6, pars6) {
       # assume general logistic growth for the fish population
       #dfish <- r_mugil*fish(1-fish/K_avg)
       # previously: dfish <- Ing*alg*fish*(1-fish/K_avg) - M_mugil*fish^2 - catch_rate*fish^2 
-      dfish <- 1/FCR*Q_B*alg*fish/(alg + K_hs_fish)*(1-fish/K_avg) - M_mugil*fish - catch_rate*fish 
+      dfish <- 1/FCR*Ing*alg*fish/(alg + K_hs_fish)*(1-fish/K_avg) - M_mugil*fish - catch_rate*fish 
       #dfish <- 1/FCR*Ing*alg*fish/(alg + K_hs_fish)*(1-fish/K_avg) - M_mugil*fish - catch_rate*fish 
       
       #dfish <- fish*((1/FCR)*Ing*alg/(w*fish + alg)*(1-fish/K_avg) - M_mugil - catch_rate)
@@ -305,7 +305,7 @@ fish_func6 <- function(t, state6, pars6) {
 
 # Model Specification
 ```{r}
-years = 1000
+years = 500
 
 t <- seq(0, years, by = 1/365/4) # 6 hour time step
 
@@ -330,8 +330,8 @@ V_fp = A_fp*h_fp # fishpond water
 V_sed = A_sed*h_sed # fishpond sediment
 
 # Nitrogen loading from submarine groundwater discharge. Estimated from Dulai, et al 2016
-SGD_Na <- 670 # [g/d] NH4+ -N loaded into He'eia Fishpond
-SGD_Ni <- 74 # [g/d] NO3- -N loaded into He'eia Fishpond
+SGD_Na <- 670/4 # [g/6hr] NH4+ -N loaded into He'eia Fishpond
+SGD_Ni <- 74/4 # [g/6hr] NO3- -N loaded into He'eia Fishpond
 
 # 670 and 74 for total ~744
 
@@ -343,6 +343,9 @@ k_nit_red = 0.5/4 # [1/6hr] reduction of nitrate N to ammonium N. Originally 0.1
 k_av = 0.7/4 # [1/6hr] ammonium to ammonia (gas) volatilization rate
 k_nit_sed = 0.05/4 # [1/6hr] nitrification (ammonium N -> nitrate N) rate in the sediment
 k_denit = 0.01/4 # [1/6hr] denitrification rate (nitrate to N2 gas)
+
+Temp = 25 # ºC, need to double check theaverage temperature from Kiana's data
+J_NH4 = (0.144*Temp + 3.49) * 10^-6*exp(0.11*Temp + 16.81) * 10^-6 * 18.039 * A_fp * 6 # flux rate for NH4+ as a function of temperature as suggested here https://www.sciencedirect.com/science/article/pii/S0044848600005603
 
 # Fishpond water-sediment exchange rate constants
 k_r = 0.1/4 # [1/6hr] resuspension rate
@@ -739,7 +742,12 @@ why is there a substantial increase in nitrogen concentration when algae density
 equations seem more physically reasonable when the fish component is removed from the equation
 
 ```{r}
-plot(out_control)
+plot(out_control) # this issue arose when the SGD contribution was modified from g/day units which were incorrect before to g/6hr units. Need to modify the half saturation by an order of magnitude or add nitrogen via another mechanism. This occured with K_hs_fish at 10^-7. Changing to 10^-6 causes all of these to be problematic for fish growth
+# changing to 10^-8 seemed to "fix" it with alg concentrations reachign the carrying capacity for the control but the concentrations are much lower in the other versions of the model
+
+# Juan Carlos also said using Q/B as the catch rate is incorrect because it is a conversion per biomass ratio that might not scale linearly across fish ages/weights when just doing a single population model
+
+# If using the Ing variable (just FA/alg_energy), then need K_hs_fish to be 10^-7. 10^-6 doesn't work (fish decrease) and 10^-8 also doesn't work
 ```
 
 ```{r}
@@ -758,9 +766,9 @@ df_restored <- as.data.frame(out_restored)
 df_urban <- as.data.frame(out_urban)
 
 fish_catch <- df_control %>% 
-  dplyr::select(time, catch) %>% 
-  dplyr::rename(Current = catch) %>% 
-  mutate(Restored = df_restored$catch, Urban = df_urban$catch) %>% 
+  dplyr::select(time, fish) %>% 
+  dplyr::rename(Current = fish) %>% 
+  mutate(Restored = df_restored$fish, Urban = df_urban$fish) %>% 
   gather('Current', 'Restored', 'Urban', key = "Scenario", value = "Mass")
 
   
@@ -869,9 +877,9 @@ fp_water_df <- df_control %>%
 ```
 
 
-
-```{r}
 # Don't run this chunk unless you're just interested in visualization of the data
+```{r}
+
 
 # Make a nice ggplot with concentration of different nitrogen types in fishpond water
 n_fp6_plot <- ggplot(data = fp_water_df, aes(x = time, y = concentration, col=nitrogen)) +
@@ -934,6 +942,7 @@ amm_late = ggplot() +
 amm_late
 ```
 
+# start running from here to visualize ammonium and nitrate modeled with the data
 ```{r, message=FALSE}
 # Read in water quality data from 2014-2015 in He'eia Fishpond CSV
 heeia_wq = read_csv('heeia_wq_data_2014_2015.csv') %>% 
@@ -992,13 +1001,13 @@ fp_ammonium6 <- fp_water_df %>%
 ```{r}
 # try to compare first year of modeled fishpond nitrate to the 2014-2015 fishpond water nitrate data
 fp_nitrate_y1 <- fp_water_df %>% filter(nitrogen == "Ni_fp") %>% 
-  filter(time >= 998 & time < 1000)
+  filter(time >= 1398 & time < 1400)
 
 
 nitate_combo_y1 = ggplot() + 
   geom_point(data = nitrate_data_shift, aes(x = day_shft, y = nit_obs),colour='blue', show.legend = T) +
   geom_errorbar(data = nitrate_data_shift, aes(x = day_shft, ymin=nit_obs-nit_sd, ymax=nit_obs+nit_sd), width=3, col='blue', show.legend = T) +
-  geom_line(data = fp_nitrate_y1, aes(x = (time-998)*365, y = concentration), col = 'green') +
+  geom_line(data = fp_nitrate_y1, aes(x = (time-1398)*365, y = concentration), col = 'green') +
   labs(x = 'Time (Days)', y = 'Concentration (mg/L)') +
   guides(fill=guide_legend()) +
   theme(axis.text.x= element_text(size = 8), panel.grid.major = element_blank(), panel.grid.minor = element_blank(),panel.background = element_blank(), axis.line = element_line(colour = "black"), plot.title = element_text(hjust = 0.5))
@@ -1046,11 +1055,11 @@ amm_combo_y1
 ```{r}
 # compare to year 80 of modeled fishpond ammonium N to the 2014-2015 fishpond water ammonium data
 fp_amm_y20 <- fp_water_df %>% filter(nitrogen == "Na_fp") %>% 
-  filter(time >= 998 & time < 1000)
+  filter(time >= 1398 & time < 1400)
 
 
 amm_combo_y20 = ggplot() +
-  geom_line(data = fp_amm_y20, aes(x = (time-998)*365, y = concentration), col = 'red') + 
+  geom_line(data = fp_amm_y20, aes(x = (time-1398)*365, y = concentration), col = 'red') + 
   geom_point(data = amm_data_shift, aes(x = day_shft, y = amm_obs),col='magenta') +
   geom_errorbar(data = amm_data_shift, aes(x = day_shft, ymin=amm_obs-amm_sd, ymax=amm_obs+amm_sd), width=3, col='magenta') +
   labs(x = 'Time (Days)', y = 'Concentration (mg/L)') +
