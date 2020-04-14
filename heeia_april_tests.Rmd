@@ -285,7 +285,7 @@ fish_func6 <- function(t, state6, pars6) {
       # assume general logistic growth for the fish population
       #dfish <- r_mugil*fish(1-fish/K_avg)
       # previously: dfish <- Ing*alg*fish*(1-fish/K_avg) - M_mugil*fish^2 - catch_rate*fish^2 
-      dfish <- 1/FCR*Ing*alg*fish/(alg + K_hs_fish)*(1-fish/K_avg) - M_mugil*fish - catch_rate*fish 
+      dfish <- 1/FCR*Q_B*alg*fish/(alg + K_hs_fish)*(1-fish/K_avg) - M_mugil*fish - catch_rate*fish 
       #dfish <- 1/FCR*Ing*alg*fish/(alg + K_hs_fish)*(1-fish/K_avg) - M_mugil*fish - catch_rate*fish 
       
       #dfish <- fish*((1/FCR)*Ing*alg/(w*fish + alg)*(1-fish/K_avg) - M_mugil - catch_rate)
@@ -741,9 +741,6 @@ equations seem more physically reasonable when the fish component is removed fro
 ```{r}
 plot(out_control)
 ```
-
-
-
 
 ```{r}
 plot(out_restored)
