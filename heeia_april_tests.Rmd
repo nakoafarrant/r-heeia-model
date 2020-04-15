@@ -266,16 +266,6 @@ fish_func6 <- function(t, state6, pars6) {
         catch_rate = 0 # no harvesting if there are no fish that are at least 2 years old
       }
       
-      # Account for recruitment following reproduction
-      if(step < 365*3 && t %% 365 != 0)
-        # No recruits until 3 years after stocking when the fish born after 2y are 1year old
-        # No recruits except for the start of a new year
-        R = 0 
-      else
-        # number of recruits to the population 
-        # N is already in units of fish per m^2. Thus, R has units of [# of 1 yr survivors/female] * [# of females / m^2 ] = # of 1 year survivors / m^2
-        #R = recr_perf*N/2
-        R=0
       
       #dfish <- FA/alg_energy/alg*fish^2 - M*fish^2 - catch_rate*fish^2 
       # dfish <- FCR*FA/alg_energy/alg*fish^2 - M*fish^2 - catch_rate*fish
@@ -305,7 +295,7 @@ fish_func6 <- function(t, state6, pars6) {
 
 # Model Specification
 ```{r}
-years = 500
+years = 1000
 
 t <- seq(0, years, by = 1/365/4) # 6 hour time step
 
@@ -393,7 +383,6 @@ k_ag = 1.5/4 # [1/d] algae growth rate constant at 20ºC
 #k_fg = 0.015/4, # rate of fish growth due to algae consumption [1/6hr]
 # K for mullet is 0.27 1/yr -> 0.0007 1/day, this is lower than the current growth rate but the current growth rate also seems particularly low
 k_ad = 0.09/4 # [1/6hr] rate of algae death, Jamu and Piedrahita, 0.01-0.09 1/d range
-k_ac = 0.08 # expect M. cephalus to consume ~8% of it's body weight in food, De Silva & Perera 
 
 
 # From Barman, Jana, Garg, Bhatnagar, https://link.springer.com/article/10.1007/s10499-004-2479-5
@@ -434,10 +423,6 @@ K_hs_fish = 10^-7*10^10*10^-3 # g/m^2, half-saturation for fish consuming algae,
 Q_B <- 12.28/365/4 # 1/6hr, Fish-based derived consumption to biomass ratio for mugil cephalus
   
 FCR = 4.6 # feed conversion ratio inputs/outputs [alg/fish]. average 3.6-5.6 for 3% and 5% BW feeding ratios. This at 4.6 FCR could be high compared to some other studies
-
-w = 10^-6 # half-saturation for M cephalus type II functional response for ingestion of algae
-
-w_avg = 1000 # [g] average weight of M. cephalus at adult age
 
 RQ = 0.82 # respiration coefficient from Serpa, et al, 2013 dimensionless
 c_mw = 12.011 # [g] atomic weight of carbon
@@ -532,7 +517,7 @@ state6 <- c(
            No_sd = 0.05, # [g/m^3] fishpond sediment initial organic N, estimated from Young thesis
            Na_sd = 0.45, # [g/m^3] fishpond sediment initial ammonium. Sediment is a source according to Hargreaves (1998)
            Ni_sd = 0.01, # [g/m^3]  fishpond sediment initial nitrate. Sediment is a sink according to Hargreaves (1998).
-           alg = 0.5, # [g/m^2] was 0.018. initial algae concentration based on average of data from Frank, et al, 2016 (0.0015 g Chl a/m^3) to g/m^2 algae. 0.0015 g Chla/m^3 * 30 carbon/Chl * 0.4
+           alg = 0.5, # [g/m^2] was 0.018. initial algae concentration based on average of data from Frank, et al, 2016 (0.0015 g Chl a/m^3) to g/m^2 algae. 0.0015 g Chla/m^3 * 30 carbon/Chl * 0.4m
            # in 2007, Heeia FP algae level would also be about 0.018 g/m^2, essentially the same average as found in 2014-2016
            # carbon to chlorophyll ratio (w/w) is 30 (Parsons et al 1984)
            # previously suggested algae to Chl ratio was 0.02 g algae/g Chla from the literature
@@ -540,7 +525,7 @@ state6 <- c(
            #N = 5000/A_fp,
            #FB = fingerling_mass*5000,
            
-           fish = 3.2 # [g/m^2] initial mullet  density (was 3.2)
+           fish = 10 # [g/m^2] initial mullet  density (was 3.2)
            #catch = 0
            )
 
@@ -748,6 +733,8 @@ plot(out_control) # this issue arose when the SGD contribution was modified from
 # Juan Carlos also said using Q/B as the catch rate is incorrect because it is a conversion per biomass ratio that might not scale linearly across fish ages/weights when just doing a single population model
 
 # If using the Ing variable (just FA/alg_energy), then need K_hs_fish to be 10^-7. 10^-6 doesn't work (fish decrease) and 10^-8 also doesn't work
+
+# changed settling rate from 0.8 to 0.05 -> this messed up the model to be unreasonable. Tried k_s = 0.1 still wasn't working. Instead returned k_s to 0.8 and changed k_r from 0.1 to 0.5, that also caused the model to crash. not terrible but fish population is going down. Try k_r 0.2 but that also seems problematic
 ```
 
 ```{r}
