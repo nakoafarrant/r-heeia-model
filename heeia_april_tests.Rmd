@@ -170,7 +170,10 @@ fish_func6 <- function(t, state6, pars6) {
       ## PHYTOPLANKTON GROWTH - primarily derived from Burford and Lorenzen 2002
       # growth rate: g = g_alg_max * L_light * L_N 
       # phytoplankton growth is at its maximum except when limited by light or nutrients (nitrogen)
-      g_alg_max = 5.9/4 # [6 hr^-1] max phytoplankton growth rate for 6 hour period ~1.45 was used in the Lorenzen study and 1.5 is used elsewhere. 0.5 is used in the Turner NPC study
+      g_alg_max = 2/4 # [6 hr^-1] max phytoplankton growth rate for 6 hour period ~1.45 was used in the Lorenzen study and 1.5 is used elsewhere. 0.5 is used in the Turner NPC study. Smith Kaneohe Bay 1981 suggests growth rates closer to 0.7 day^1
+      
+      # phytoplankton Nitrogen assimilation rate is 0.003 mol/m^3/day according to Smith, et al. 1981
+      
       # https://www.hindawi.com/journals/jmb/2013/684739/ suggests a max growth rate of 5.9 day^-1 for diatoms
       k_chl = 14 # [m^-1 g Chl ^-1] light extinction caused by Chl-a
       k_other = 2.5 # [m^-1] light extinction caused by non Chl-a factors
@@ -295,7 +298,7 @@ fish_func6 <- function(t, state6, pars6) {
 
 # Model Specification
 ```{r}
-years = 1000
+years = 1500
 
 t <- seq(0, years, by = 1/365/4) # 6 hour time step
 
@@ -391,9 +394,9 @@ k_ad = 0.09/4 # [1/6hr] rate of algae death, Jamu and Piedrahita, 0.01-0.09 1/d 
 k_birth = 0.35/365/4 # [1/6hr]
 
 # nitrogen concentrations in ocean - units g/m^3
-No_ocean = 0.001
-Na_ocean = 0.04 
-Ni_ocean = 0.02
+No_ocean = 0.001 # need to revisit these parameters. https://www.sciencedirect.com/science/article/pii/S030438000500164X#bib30 is a good source or Smith et al 1981
+Na_ocean = 0.002 # also maybe a little high. Some data from Kaneohe bay indicates 0.002. Used to be 0.04 in the model
+Ni_ocean = 0.005 # this may even be a little high relative to the bay being closer to 0.005 g/m^3. Used to be 0.02
 
 # water volume flux rate (m^3/6hr)
 sp_fl= 191660/4
@@ -417,7 +420,8 @@ K_alg = historic_MSY_max*FA*365*4/eff/alg_energy # g alg / (m^2)
 
 K_hs_alg = 10^-8*10^10*10^-3 # g/m^2, half-saturation for plant uptake of nitrogen, suggested value from https://www.sciencedirect.com/science/article/pii/S2351989414000420 converted from kg/L to kg/km^2 to g/m^2. This is on some what of a simlar order of magnitude to the K_SN variable from before above
 
-K_hs_fish = 10^-7*10^10*10^-3 # g/m^2, half-saturation for fish consuming algae, suggested value from https://www.sciencedirect.com/science/article/pii/S2351989414000420 converted from kg/L to kg/km^2 to g/m^2
+K_hs_fish = 2*10^5*14/A_fp
+  #10^-7*10^10*10^-3 # g/m^2, half-saturation for fish consuming algae, suggested value from https://www.sciencedirect.com/science/article/pii/S2351989414000420 converted from kg/L to kg/km^2 to g/m^2
 
 
 Q_B <- 12.28/365/4 # 1/6hr, Fish-based derived consumption to biomass ratio for mugil cephalus
@@ -517,7 +521,8 @@ state6 <- c(
            No_sd = 0.05, # [g/m^3] fishpond sediment initial organic N, estimated from Young thesis
            Na_sd = 0.45, # [g/m^3] fishpond sediment initial ammonium. Sediment is a source according to Hargreaves (1998)
            Ni_sd = 0.01, # [g/m^3]  fishpond sediment initial nitrate. Sediment is a sink according to Hargreaves (1998).
-           alg = 0.5, # [g/m^2] was 0.018. initial algae concentration based on average of data from Frank, et al, 2016 (0.0015 g Chl a/m^3) to g/m^2 algae. 0.0015 g Chla/m^3 * 30 carbon/Chl * 0.4m
+           alg = 0.03, # [g/m^2] model was working with alg = 0.5. Before it was 0.018. initial algae concentration based on average of data from Frank, et al, 2016 (0.0015 g Chl a/m^3) to g/m^2 algae. 0.0015 g Chla/m^3 * 30 carbon/Chl * 0.4m.
+           #  0.03 = 50*0.0015*.4
            # in 2007, Heeia FP algae level would also be about 0.018 g/m^2, essentially the same average as found in 2014-2016
            # carbon to chlorophyll ratio (w/w) is 30 (Parsons et al 1984)
            # previously suggested algae to Chl ratio was 0.02 g algae/g Chla from the literature
@@ -528,6 +533,11 @@ state6 <- c(
            fish = 10 # [g/m^2] initial mullet  density (was 3.2)
            #catch = 0
            )
+
+# Smith et all 1981 suggests post-sewage diversion particulate standing phytoplnakton is 0.035 g/m^3 for average in Kaneohe Bay. Ocean around Kaneohe Bay averages roughly 0.01 g/m^3
+# He also suggests that phytoplnkton biomass (mgC/m^3) is best estimatedf as 50 times the Chlorophyll a standing crop.
+
+# Also expect microheterotrophs in Kaneohe Bay average about 0.044 g/m^3  and detritus at 0.113 g/m^3
 
 # According to Mohlenkamp et al. 2019, Paepae o He'eia produced ~1.2 metric tons of moi (Pacific Threadfin) from 2006-2009, which is about 400 kg per year
 # historical estimates for this fishpond max out around 15 metric tons (15,000 kg) with an asymptotic weight of 8.5 kg per striped mullet this would amount to ~1750 fully grown striped mullet.
@@ -735,6 +745,8 @@ plot(out_control) # this issue arose when the SGD contribution was modified from
 # If using the Ing variable (just FA/alg_energy), then need K_hs_fish to be 10^-7. 10^-6 doesn't work (fish decrease) and 10^-8 also doesn't work
 
 # changed settling rate from 0.8 to 0.05 -> this messed up the model to be unreasonable. Tried k_s = 0.1 still wasn't working. Instead returned k_s to 0.8 and changed k_r from 0.1 to 0.5, that also caused the model to crash. not terrible but fish population is going down. Try k_r 0.2 but that also seems problematic
+
+# have experimented some with increasing the initial fish density amount. Need to revisit that later
 ```
 
 ```{r}
