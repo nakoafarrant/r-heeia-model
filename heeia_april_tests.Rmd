@@ -395,8 +395,8 @@ k_birth = 0.35/365/4 # [1/6hr]
 
 # nitrogen concentrations in ocean - units g/m^3
 No_ocean = 0.001 # need to revisit these parameters. https://www.sciencedirect.com/science/article/pii/S030438000500164X#bib30 is a good source or Smith et al 1981
-Na_ocean = 0.002 # also maybe a little high. Some data from Kaneohe bay indicates 0.002. Used to be 0.04 in the model
-Ni_ocean = 0.005 # this may even be a little high relative to the bay being closer to 0.005 g/m^3. Used to be 0.02
+Na_ocean = 0.0024 # also maybe a little high. Some data from Kaneohe bay indicates 0.002. Used to be 0.04 in the model
+Ni_ocean = 0.0068 # this may even be a little high relative to the bay being closer to 0.005 g/m^3. Used to be 0.02
 
 # water volume flux rate (m^3/6hr)
 sp_fl= 191660/4
