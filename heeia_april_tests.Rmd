@@ -11,7 +11,7 @@ this file is usd to test diffferent chagnes to improve the model in
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r, message = F}
 library(deSolve)
 library(ggplot2)
 library(schoolmath)
@@ -97,6 +97,43 @@ daily_solar <- read_csv('solar_irrad.csv')
 
 ```
 
+```{r, message=FALSE}
+# Read in water quality data from 2014-2015 in He'eia Fishpond CSV
+heeia_wq = read_csv('heeia_wq_data_2014_2015.csv') %>% 
+  arrange(date) %>% 
+  dplyr::select(date:turbidity)
+
+```
+
+
+```{r}
+# Read in Heeia fishpond temperature data
+temp_surface <- heeia_wq %>% 
+  dplyr::select(date, statistic, temp_surface) %>% 
+  filter(statistic == "Mean" | statistic == "Stdv" | statistic == "N") %>% 
+  spread(key = statistic, value = "temp_surface")  %>% 
+  dplyr::rename(temps = Mean, temps_sd = Stdv) %>% 
+  na.omit()
+
+temp_bottom <- heeia_wq %>% 
+  dplyr::select(date, statistic, temp_bottom) %>% 
+  filter(statistic == "Mean" | statistic == "Stdv" | statistic == "N") %>% 
+  spread(key = statistic, value = "temp_bottom")  %>% 
+  dplyr::rename(tempb = Mean, tempb_sd = Stdv) %>% 
+  na.omit()
+
+```
+
+```{r}
+# calculate monthly average temperature
+temp_full <- merge(temp_surface, temp_bottom, by="date") %>% 
+  mutate(temp_avg = (temps + tempb)/2)
+  
+temp_summ <- temp_full %>% 
+  mutate(month = month(as.POSIXlt(ymd(date)))) %>% 
+  group_by(month) %>% 
+  summarize(temp_mean = mean(temp_avg), temp_sd = sd(temp_avg), n = n())
+```
 
 # 6-Hour Time Step: Model Equations
 Realized that running into issues with the stream and tide specifications that are determined based on the value of t and need to be adjusted based on the time step being taken
@@ -941,15 +978,8 @@ amm_late = ggplot() +
 amm_late
 ```
 
-# start running from here to visualize ammonium and nitrate modeled with the data
-```{r, message=FALSE}
-# Read in water quality data from 2014-2015 in He'eia Fishpond CSV
-heeia_wq = read_csv('heeia_wq_data_2014_2015.csv') %>% 
-  arrange(date) %>% 
-  dplyr::select(date:turbidity)
 
-```
-
+# start running from here if want to see how the model compares to other data
 
 ```{r}
 nitrate_data <- heeia_wq %>% 
@@ -985,6 +1015,8 @@ ammonium_data <- heeia_wq %>%
 
 amm_data_shift <- ammonium_data %>% 
   mutate(day_shft = day_ct + 147) 
+
+
 ```
 
 
