@@ -356,8 +356,10 @@ fish_func6 <- function(t, state6, pars6) {
       A7 = 1.4*10^3/365/4 # (1/6hr) max uptake rate by benthic autotrophs
       A8 = 1.14*10^2/365/4 # (1/6hr) max grazing rate by benthic heterotrohps
       
-      c_a4 = 1.5/10^3*V_fp #(m^3/mol N) exponential degree of ammonium inhibition on nitrate uptake by pelagic autotrophs
-      c_a7 = 1.5/10^3*V_fp #(m^3/mol N) exponential degree of ammonium inhibition on nitrate uptake by benthic autotrophs
+      # had previously been multiplying c_a4 and c_a7 by V_fp to scale by the fishpond volume. Model wasn't working particularly well but maybe something to revisit
+      c_a4 = 1.5/10^3 #(m^3/mol N) exponential degree of ammonium inhibition on nitrate uptake by pelagic autotrophs
+      c_a7 = 1.5/10^3 #(m^3/mol N) exponential degree of ammonium inhibition on nitrate uptake by benthic autotrophs
+      
       c_b = 0.6 # ratio of bacterial uptake of ammonium to DON
       c_dec = 2.52/365/4 # (1/6hr) raction of PON decomposed to DON
       c_dep = 3.6*10^2/365/4 # (m/6hr) sinking rate of PON in the water column
@@ -388,11 +390,11 @@ fish_func6 <- function(t, state6, pars6) {
       g5 = 1.86*10^2/365/4 # (1/6hr) 
       g6 = 1.46*10^2/365/4 # (1/6hr) max growth rate of pelagic heterotrophs
       
-      P4 = 6.4*10^4*0.0018/V_fp # (mol N/m^3), half-saturation constant of nutrient assimilation kinetics by pelagic autotrophs; sum of the ammonium and nitrate reservoirs
-      P5 = 5.4*10^5*0.0018/V_fp # all of these half saturation constants were calculated relative to the size of the reservoirs in the Southern Kaneohe Basin which has more than 100x the volume of Heeia Fishpond. The 0.0018 is a correction factor relative to the volume ratio of Heeia FP: Kaneohe Bay southern basin assuming that the two water bodies have similar compositions
-      P6 = 2.0*10^5*0.0018/V_fp
-      P7 = 6.4*10^4*0.0018/V_fp
-      P8 = 1.49*10^5*0.0018/V_fp
+      P4 = 6.4*10^4*0.0018 # (mol N), half-saturation constant of nutrient assimilation kinetics by pelagic autotrophs; sum of the ammonium and nitrate reservoirs
+      P5 = 5.4*10^5*0.0018 # all of these half saturation constants were calculated relative to the size of the reservoirs in the Southern Kaneohe Basin which has more than 100x the volume of Heeia Fishpond. The 0.0018 is a correction factor relative to the volume ratio of Heeia FP: Kaneohe Bay southern basin assuming that the two water bodies have similar compositions
+      P6 = 2.0*10^5*0.0018
+      P7 = 6.4*10^4*0.0018
+      P8 = 1.49*10^5*0.0018
       
       q4 = 0.8 # fraction of assimilated nutrients converted to biomass by pelagic autotrophs
       q5 = 0.6 # fraction of ingested food converted to biomass by pelagic heterotrophic bacteria
@@ -420,30 +422,30 @@ fish_func6 <- function(t, state6, pars6) {
       # Characterize biological metabolism components of the model
       
       # Pelagic autotrophs (phytoplankton)
-      I4 = c_pi*c_pp*exp(1)/(c_w*h_fp + c_ds*(N3_fp + N4_fp)*h_fp)*(exp((-I0/I_opt)*exp(-c_w*h_fp - c_ds*(N3_fp + N4_fp)*h_fp)) - exp(-I0/I_opt))/4
-      K4 = ((N1a_fp + N1n_fp)^c_MM)/((N1a_fp +N1n_fp)^c_MM + P4^c_MM)
+      I4 = c_pi*c_pp*exp(1)/(c_w*h_fp + c_ds*((N3_fp + N4_fp)*V_fp)*h_fp)*(exp((-I0/I_opt)*exp(-c_w*h_fp - c_ds*((N3_fp + N4_fp)*V_fp)*h_fp)) - exp(-I0/I_opt))/4
+      K4 = (((N1a_fp + N1n_fp)*V_fp)^c_MM)/(((N1a_fp +N1n_fp)*V_fp)^c_MM + P4^c_MM)
       T_alpha = exp(0.0633*(T_fp - T_fp_mean))
       
-      F4 = (A4*N4_fp)*I4*K4*T_alpha*V_fp 
+      F4 = (A4*N4_fp)*I4*K4*T_alpha*V_fp # (mol N/6hr)
       
       # Pelagic heterotrophic bacteria
-      K5 = (N1a_fp + N2_fp)^c_MM/((N1a_fp + N2_fp)^c_MM + P5^c_MM)
-      F5 = A5*N5_fp*K5*T_alpha*V_fp
+      K5 = ((N1a_fp + N2_fp)*V_fp)^c_MM/(((N1a_fp + N2_fp)*V_fp)^c_MM + P5^c_MM)
+      F5 = A5*N5_fp*K5*T_alpha*V_fp # (mol N/6hr)
       
       # Pelagic heterotrophs (fish)
-      K6 = (N3_fp + N4_fp + N5_fp)^c_MM/((N3_fp + N4_fp + N5_fp)^c_MM + P6^c_MM)
+      K6 = ((N3_fp + N4_fp + N5_fp)*V_fp)^c_MM/(((N3_fp + N4_fp + N5_fp)*V_fp)^c_MM + P6^c_MM)
       T_beta = exp(0.1*(T_fp - T_fp_mean))
-      F6 = A6*N6_fp*K6*T_beta*V_fp
+      F6 = A6*N6_fp*K6*T_beta*V_fp # (mol N/6hr)
       
       # Benthic heterotrophs
-      I_R = I0*exp(-c_w*h_sed - c_ds*(N3_fp + N4_fp)*h_sed) # Langleys/6hr, incident light at sediment surface in Heeia fishpond
+      I_R = I0*exp(-c_w*h_sed - c_ds*(N3_fp*V_fp + N4_fp*V_fp)*h_sed) # Langleys/6hr, incident light at sediment surface in Heeia fishpond
       I7 = I_R/I_opt*exp(1-(I_R/I_opt)) # light regulation factor for benthic species
-      K7 = ((N1a_fp + N1n_fp)^c_MM)/((N1a_fp +N1n_fp)^c_MM + P7^c_MM)
-      F7 = (A7*N7_fp)*I7*K7*T_alpha*V_fp
+      K7 = ((N1a_fp*V_fp + N1n_fp*V_fp)^c_MM)/((N1a_fp*V_fp +N1n_fp*V_fp)^c_MM + P7^c_MM)
+      F7 = (A7*N7_fp)*I7*K7*T_alpha*V_fp # (mol N/6hr)
       
       # Benthic heterotrophs
-      K8 = (N3_fp + N7_fp)^c_MM/((N3_fp + N7_fp)^c_MM + P8^c_MM)
-      F8 = A8*N8_fp*K8*T_beta*V_fp
+      K8 = (N3_fp*V_fp + N7_fp*V_fp)^c_MM/((N3_fp*V_fp + N7_fp*V_fp)^c_MM + P8^c_MM)
+      F8 = A8*N8_fp*K8*T_beta*V_fp # (mol N/6hr)
       
       # all of the F flux terms should have units of (mol N/6 hr)
       NF_1a1n = 1.87*10^6/365/4*0.00181 # (mol N/6hr) from Tanaka 2005 rescaled by volume difference of fishpond relative to the southern basin
