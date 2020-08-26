@@ -1,0 +1,795 @@
+---
+title: "sensitivity simple model"
+author: "Nakoa Farrant"
+date: "8/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message = F}
+library(deSolve)
+library(ggplot2)
+library(schoolmath)
+library(tidyverse)
+library(TropFishR)
+require(MASS)
+require(dplyr)
+library(colorspace)
+library(MLmetrics)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+library(FishLife)
+library(FME)
+```
+
+
+
+```{r}
+# The below values are characteristic of Mugil cephalus (striped mullet, ‘ama‘ama) as defined in the S.I. of Cheung, et al. 2013, who derived these values from data that is freely available at fishbase.org
+Linf_mugil = 60 # asymptotic length for Mugil cephalus, [cm]
+K_mugil = 0.27 # von Bertalanffy growth parameter, [1/year]
+a_mugil = 0.032 # This a is specific to M. cephalus in Hawai'i estuaries (Peyton, et al. 2015) The a length-weight conversion parameter for overall M.cephauls on fishbase is 0.0085
+b_mugil = 3.03 # This b is specific to M. cephalus in Hawai'i estuaries (Peyton, et al. 2015). For general fishbase, the length-weight conversion parameter is b = 3 for M. cephalus
+Winf_mugil = a_mugil*Linf_mugil^b_mugil # asymptotic weight using length-weight conversion [grams]
+# Using the Pauly 1979 empirical equation for t0 from fishbase. Seems to be log10 and not ln because other instances on the fishbase page explicityly use ln.
+t0_mugil = -exp(-0.3922-0.2752*log10(Linf_mugil)-1.038*log10(K_mugil))
+
+# For Mugil cephalus (striped mullet), natural mortality can be empirically derived using the method developed by Then, et al. 2015
+M_mugil = as.numeric(M_empirical(Linf = Linf_mugil, K_l = K_mugil, method = "Then_growth")) # [1/year]
+```
+
+```{r, message=FALSE}
+# USGS Stream Gauge #16275000 He'eia Stream at Haiku Valley near Kaneohe, Oahu, HI
+# Data originally collected in cubic feet per second and converted to m^3 / day
+# Data can be found at: https://waterdata.usgs.gov/nwis/monthly?referred_module=sw&amp;site_no=16275000&amp;por_16275000_41087=2643571,00060,41087,1914-02,2019-05&amp;format=html_table&amp;date_format=YYYY-MM-DD&amp;rdb_compression=file&amp;submitted_form=parameter_selection_list
+daily_stream <- read_csv('heeia_stream_daily.csv') 
+
+st_clean <- daily_stream %>% 
+  mutate(mean = mean_va*0.028*1.157*10^5) %>% # variable to convert mean flow from ft^3/s to m^3/d
+  mutate(date = as.Date(paste(month, day, sep = "-"), "%m-%d")) %>% # this attaches the 2019 year even though these are average flow rates from 1914 to 2019
+  filter(date != 2019-02-29) %>%  # remove Feb 29 that's only present in leap years
+  mutate(JD = 1:366) %>% # create Julian Day variable
+  dplyr::select(date, JD, mean)
+
+
+# Monthly solar irradiance [W/m^2] near He‘eia Fishpond based on Univ. of Hawai'i data
+# Monthly solar radiation rasters provided the data at the point 157.808ºW, 21.435ºN
+# Data source: solar.geography.hawaii.edu/downloads.html
+daily_solar <- read_csv('solar_irrad.csv') 
+
+```
+
+```{r, message=FALSE}
+# Read in water quality data from 2014-2015 in He'eia Fishpond CSV
+heeia_wq = read_csv('heeia_wq_data_2014_2015.csv') %>% 
+  arrange(date) %>% 
+  dplyr::select(date:turbidity)
+
+```
+
+
+```{r}
+# Read in Heeia fishpond temperature data
+temp_surface <- heeia_wq %>% 
+  dplyr::select(date, statistic, temp_surface) %>% 
+  filter(statistic == "Mean" | statistic == "Stdv" | statistic == "N") %>% 
+  spread(key = statistic, value = "temp_surface")  %>% 
+  dplyr::rename(temps = Mean, temps_sd = Stdv) %>% 
+  na.omit()
+
+temp_bottom <- heeia_wq %>% 
+  dplyr::select(date, statistic, temp_bottom) %>% 
+  filter(statistic == "Mean" | statistic == "Stdv" | statistic == "N") %>% 
+  spread(key = statistic, value = "temp_bottom")  %>% 
+  dplyr::rename(tempb = Mean, tempb_sd = Stdv) %>% 
+  na.omit()
+
+```
+
+```{r}
+# calculate monthly average temperature
+temp_full <- merge(temp_surface, temp_bottom, by="date") %>% 
+  mutate(temp_avg = (temps + tempb)/2)
+  
+temp_summ <- temp_full %>% 
+  mutate(month = month(as.POSIXlt(mdy(date)))) %>% 
+  group_by(month) %>% 
+  summarize(temp_mean = mean(temp_avg), temp_sd = sd(temp_avg), n = n())
+```
+
+```{r}
+years = 300
+
+yr_ct = rep(0:years, each = 365*4)
+
+g_a = vector(mode = "numeric", length = length(t)) # don't think this gets used
+
+# define physical parameters of ecosystem 
+h_st = 0.5 # [m] average depth of stream 
+l_st = 700 # [m] length of interest for He‘eia Stream
+w_st = 15 # [m] approximate width of stream
+
+A_fp = 360000 # [m^2] area of fishpond
+h_fp = 0.4 # [m] average depth of fishpond water column [m]
+
+A_sed = 360000 # [m^2] area of sediment below fishpond water column
+h_sed = 0.005 # [m] depth of sediment of interest in meters
+
+# define volumes of model's three physical compartments [m^3]
+V_st = h_st*l_st*w_st # stream
+V_fp = A_fp*h_fp # fishpond water
+V_sed = A_sed*h_sed # fishpond sediment
+
+
+# fish and algae rates and constants
+
+FA = 1450/1000/4 # [kJ g fish^-1 6h^-1] energy consumed per gram of M. cephalus every 6 hours from FAO website says maximum growth rate is 1447 kJ/kg BW daily and 126 kJ/kg BW for maintenance
+
+eff = 0.6 # one estimate of feed conversion efficiency for M. cephalus (assimilates 60% of the food it consumes)
+alg_energy = 17.6 # [kJ g^-1 algae] energy per gram of Nannochloropsis spp. from Rebolloso-Fuentes, et al 2001
+      # microplankton energy density 8 kJ g^-1 in Mediterranean (Barroeta, et al 2017). Whyte 1987 seems to further support ~8 kJ g^-1
+
+# FISH EGESTION AND EXCRETION ENERGY AND MASS PARAMETERS
+      a_eg = 0.16 # egested fraction of consumption from Megrey, et al. 2007 (0.16 recommended by source)
+      a_ex = 0.1 # excreted percentage of consumed food that isn't egested from Megrey, et al. 2007 (0.1 recommended by source)
+      
+      eg = a_eg*FA/alg_energy # [g alg g fish^-1 6hr^-1] egestion rate
+      l_fingerling = 3 # [cm] stock pond using 3cm fingerlings of M. cephalus
+      fingerling_mass = a_mugil*l_fingerling^b_mugil # [g] approximate mass of fingerlings at time of stocking
+      
+      adult_energy = 7.8 #[kJ/g Wet Mass] energy content of 23 cm adult mugil cephalus which is about a 390 g fish which is 3040 kJ per fish from Marais and Erasmus, 1977
+      # alternative energy content conversion for M. cephalus on Fishbase under the "Mass Conversion" tab: 5.3 kJ/g WM
+
+# acquire the various life history parameters for M. cephalus from FishLife R package
+Predict_mugil = Plot_taxa(Search_species(Genus="Mugil",Species = "cephalus")$match_taxonomy, mfrow=c(2,2))
+
+# extract the bias corrected intrinsic growth rate, r [1/yr], for M. cephalus from the FishLife model
+# this is a fair amount higher than other estimates of intrinsic growth rate
+r_mugil_est = exp(Predict_mugil[[1]]$Mean_pred["r"]+0.5*diag(Predict_mugil[[1]]$Cov_pred)["r"]) %>% as.numeric() 
+
+# extract the bias corrected mortality coefficient for M. cephalus from fishlife, 0.334 1/yr is on par with other estimates (0.346 1/yr from Then empirical formula)
+M_mugil_est = exp(Predict_mugil[[1]]$Mean_pred["M"]+0.5*diag(Predict_mugil[[1]]$Cov_pred)["M"]) %>% 
+  as.numeric()/365/4 # [1/6hr] 
+
+# The fishing rate for the MSY had been predicted in FishLife as ln_Fmsy. That value was bias-corrected that and then exponentiated to get the Fmsy calculated below
+# this is a fair amount larger than F suggested by other studies (0.343), but it does align with F_msy from other modeling approaches (see vggf flile)
+Fmsy_mugil_est = exp((exp(Predict_mugil[[1]]$Mean_pred["ln_Fmsy"]+0.5*diag(Predict_mugil[[1]]$Cov_pred)["ln_Fmsy"]) %>% 
+  as.numeric()))/365/5 # [1/6hr] maximum sustainable fishing rate
+
+
+ # Nitrogen reaction rates
+      k_oa = 0.1/4 # [1/6hr] conversion of organic N to ammonium N
+      k_ao = 0.1/4 # [1/6hr] conversion of ammonium N to organic N 
+      k_nit = 0.5/4 # [1/6hr] nitrification (ammonium N -> nitrate N) in water column
+      k_nit_red = 0.5/4 # [1/6hr] reduction of nitrate N to ammonium N. Originally 0.1/4
+      k_av = 0.7/4 # [1/6hr] ammonium to ammonia (gas) volatilization rate
+      k_nit_sed = 0.05/4 # [1/6hr] nitrification (ammonium N -> nitrate N) rate in the sediment
+      k_denit = 0.01/4 # [1/6hr] denitrification rate (nitrate to N2 gas)
+    
+      Temp = 25 # ºC, need to double check theaverage temperature from Kiana's data
+  
+      
+      # Fishpond water-sediment exchange rate constants
+      k_r = 0.1/4 # [1/6hr] resuspension rate
+      k_s = 0.8/4 # [1/6hr] settling rate, used to be 0.05 /day. If going to make it this high, maybe it should just be related to phytoplankton settling rate due to their size. Burdoff and Lorenzen suggest 0.8 /day
+      # figures look a little different with 0.05 /day but still retain generally the same shape
+      k_b = 0.001/4 # [1/6hr] burial removal rate [1/6hr] 
+      
+      r_NChl = 0.2 # [g N/g Chla] ratio of nitrogen to Chl-a in algae
+      k_ra = 0.1/4 #0.025/4, # [1/6hr] algae respiration rate
+      k_ag = 1.5/4 # [1/d] algae growth rate constant at 20ºC
+      #k_fg = 0.015/4, # rate of fish growth due to algae consumption [1/6hr]
+      # K for mullet is 0.27 1/yr -> 0.0007 1/day, this is lower than the current growth rate but the current growth rate also seems particularly low
+      k_ad = 0.09/4 # [1/6hr] rate of algae death, Jamu and Piedrahita, 0.01-0.09 1/d range
+      
+      
+      # From Barman, Jana, Garg, Bhatnagar, https://link.springer.com/article/10.1007/s10499-004-2479-5
+      # growth rate for M. cephalus in salinity 20 ppt 0.69 g/d or 0.67 g/d in 25 ppt
+      # SGR --specific growth rate of weight-- (% BW (in grams) per day) about 4% per day
+      k_birth = 0.35/365/4 # [1/6hr]
+      
+      # nitrogen concentrations in ocean - units g/m^3
+      No_ocean = 0.001 # need to revisit these parameters. https://www.sciencedirect.com/science/article/pii/S030438000500164X#bib30 is a good source or Smith et al 1981
+      Na_ocean = 0.0024 # also maybe a little high. Some data from Kaneohe bay indicates 0.002. Used to be 0.04 in the model
+      Ni_ocean = 0.0068 # this may even be a little high relative to the bay being closer to 0.005 g/m^3. Used to be 0.02
+      
+      # water volume flux rate (m^3/6hr)
+      sp_fl= 191660/4
+      sp_ebb = -174880/4
+      np_fl = 141384/4
+      np_ebb = -159938/4
+      
+      
+      # historic estimated yields of 33-56 g/m^2/yr (300-500 lb/acre)
+      # minimum yield for Oahu is 33.6 g/m^2
+      
+      historic_MSY_min = 33 # g/m^2/yr, minimum MSY for history yields
+      historic_MSY_max = 56 # g/m^2/yr, maximum MSY for historic yields
+      historic_MSY_avg = (historic_MSY_max + historic_MSY_min)/2
+      
+      # FISH CONSUMPTION ENERGY AND MASS PARAMETERS
+      # 126 kJ gross energy (GE) / kg body weight for daily maintenance but 1446.7 kJ GE / kg BW is recommended for maximum growth
+      
+      # estimate carrying capacity for phytoplankton. At minimum there has to be enough algae to support the historic fish yields
+      # there were also possible sources of food so alg doesn't need to account for all of the calories consumed, but also need to account for inefficiencies in use of food that is consumed
+      
+      
+      # not in love with the initial version of the calculation below. Might want to find a way to actually do it with the carrying capacity
+      K_alg = historic_MSY_max*FA*365*4/eff/alg_energy # g alg / (m^2)
+      
+      
+      K_hs_fish = 2*10^5*14/A_fp
+        #10^-7*10^10*10^-3 # g/m^2, half-saturation for fish consuming algae, suggested value from https://www.sciencedirect.com/science/article/pii/S2351989414000420 converted from kg/L to kg/km^2 to g/m^2
+   
+        
+      FCR = 4.6 # feed conversion ratio inputs/outputs [alg/fish]. average 3.6-5.6 for 3% and 5% BW feeding ratios. This at 4.6 FCR could be high compared to some other studies
+      
+      c_mw = 12.011 # [g] atomic weight of carbon
+      o2_mw = 32 # [g] molecular weight of oxygen gas
+      c_energy = 373 # [kJ mol C^-1]
+      
+      alg_CN = 6.6 # ratio of C:N in algae based on the Refield ratio 106:16
+      
+      
+      exc = a_ex*(FA/alg_energy - eg) # [g alg g fish^-1 6hr^-1] excretion rate
+      
+      # FISH DENSITY
+      fingerling_energy = adult_energy*fingerling_mass # [kJ per fingerling]
+      
+      Fcarr = 56 # [g/m^2] carrying capacity for fish in He‘eia Fishpond, 500 pounds per acre
+
+      # NITROGEN LOADING
+      LU_No = 1.8 # [g/m^3] organic N concentration in wetland for current land use
+      LU_Na = 0.07 # [g/m^3] ammonium N concentration in wetland for current land use
+      LU_Ni = 0.07 # [g/m^3] nitrate N concentration in wetland for current land use
+      
+      K_min = historic_MSY_min*4/r_mugil # g/m^2, minimum carrying capacity
+      K_max = historic_MSY_max*4/r_mugil # g/m^2, maximum carrying capacity
+      
+```
+
+```{r}
+# Parameterization for other land use scenarios
+# Annual increases in loading of nitrogen forms to He‘eia Stream based on the potential upstream land uses. Here we use linear increases in loading for the restored and urban scenarios such that the 
+pars_control = list(
+      No_inc = 0, # [g/m^3]
+      Na_inc = 0, # [g/m^3]
+      Ni_inc = 0, # [g/m^3]
+      
+      # Nitrogen loading from submarine groundwater discharge. Estimated from Dulai, et al 2016
+      SGD_Na = 670/4, # [g/6hr] NH4+ -N loaded into He'eia Fishpond
+      SGD_Ni = 74/4, # [g/6hr] NO3- -N loaded into He'eia Fishpond
+      
+      # Nitrogen reaction rates
+      k_oa = 0.1/4, # [1/6hr] conversion of organic N to ammonium N
+      k_ao = 0.1/4, # [1/6hr] conversion of ammonium N to organic N 
+      k_nit = 0.5/4, # [1/6hr] nitrification (ammonium N -> nitrate N) in water column
+      k_nit_red = 0.5/4, # [1/6hr] reduction of nitrate N to ammonium N. Originally 0.1/4
+      k_av = 0.7/4, # [1/6hr] ammonium to ammonia (gas) volatilization rate
+      k_nit_sed = 0.05/4, # [1/6hr] nitrification (ammonium N -> nitrate N) rate in the sediment
+      k_denit = 0.01/4, # [1/6hr] denitrification rate (nitrate to N2 gas)
+      
+      Temp = 25, # ºC, need to double check theaverage temperature from Kiana's data
+  
+      
+      # Fishpond water-sediment exchange rate constants
+      k_r = 0.1/4, # [1/6hr] resuspension rate
+      k_s = 0.8/4, # [1/6hr] settling rate, used to be 0.05 /day. If going to make it this high, maybe it should just be related to phytoplankton settling rate due to their size. Burdoff and Lorenzen suggest 0.8 /day
+      # figures look a little different with 0.05 /day but still retain generally the same shape
+      k_b = 0.001/4, # [1/6hr] burial removal rate [1/6hr] 
+      
+      r_NChl = 0.2, # [g N/g Chla] ratio of nitrogen to Chl-a in algae
+      k_ra = 0.1/4, #0.025/4, # [1/6hr] algae respiration rate
+      k_ag = 1.5/4, # [1/d] algae growth rate constant at 20ºC
+      #k_fg = 0.015/4, # rate of fish growth due to algae consumption [1/6hr]
+      # K for mullet is 0.27 1/yr -> 0.0007 1/day, this is lower than the current growth rate but the current growth rate also seems particularly low
+      k_ad = 0.09/4, # [1/6hr] rate of algae death, Jamu and Piedrahita, 0.01-0.09 1/d range
+      
+      
+      # From Barman, Jana, Garg, Bhatnagar, https://link.springer.com/article/10.1007/s10499-004-2479-5
+      # growth rate for M. cephalus in salinity 20 ppt 0.69 g/d or 0.67 g/d in 25 ppt
+      # SGR --specific growth rate of weight-- (% BW (in grams) per day) about 4% per day
+      k_birth = 0.35/365/4, # [1/6hr]
+      
+      # nitrogen concentrations in ocean - units g/m^3
+      No_ocean = 0.001, # need to revisit these parameters. https://www.sciencedirect.com/science/article/pii/S030438000500164X#bib30 is a good source or Smith et al 1981
+      Na_ocean = 0.0024, # also maybe a little high. Some data from Kaneohe bay indicates 0.002. Used to be 0.04 in the model
+      Ni_ocean = 0.0068, # this may even be a little high relative to the bay being closer to 0.005 g/m^3. Used to be 0.02
+      
+      # water volume flux rate (m^3/6hr)
+      sp_fl= 191660/4,
+      sp_ebb = -174880/4,
+      np_fl = 141384/4,
+      np_ebb = -159938/4,
+      
+      r_mugil = r_mugil_est,
+      M_mugil = M_mugil_est,
+      Fmsy_mugil = Fmsy_mugil_est,
+      
+      # historic estimated yields of 33-56 g/m^2/yr (300-500 lb/acre)
+      # minimum yield for Oahu is 33.6 g/m^2
+      
+      historic_MSY_min = 33, # g/m^2/yr, minimum MSY for history yields
+      historic_MSY_max = 56, # g/m^2/yr, maximum MSY for historic yields
+      historic_MSY_avg = (historic_MSY_max + historic_MSY_min)/2,
+      
+      # MSY = r*K/4 ---> K = MSY/r*4, where K is the carrying capacity and r is the intrinsic growth rate for that species
+      K_min = historic_MSY_min*4/r_mugil, # g/m^2, minimum carrying capacity
+      K_max = historic_MSY_max*4/r_mugil, # g/m^2, maximum carrying capacity
+      K_avg = (K_min + K_max)/2, # g/m^2, average carrying capacity
+      
+      
+      # FISH CONSUMPTION ENERGY AND MASS PARAMETERS
+      # 126 kJ gross energy (GE) / kg body weight for daily maintenance but 1446.7 kJ GE / kg BW is recommended for maximum growth
+      
+      # estimate carrying capacity for phytoplankton. At minimum there has to be enough algae to support the historic fish yields
+      # there were also possible sources of food so alg doesn't need to account for all of the calories consumed, but also need to account for inefficiencies in use of food that is consumed
+      
+      
+      # not in love with the initial version of the calculation below. Might want to find a way to actually do it with the carrying capacity
+      K_alg = historic_MSY_max*FA*365*4/eff/alg_energy, # g alg / (m^2)
+
+      K_hs_fish = 2*10^5*14/A_fp,
+        #10^-7*10^10*10^-3 # g/m^2, half-saturation for fish consuming algae, suggested value from https://www.sciencedirect.com/science/article/pii/S2351989414000420 converted from kg/L to kg/km^2 to g/m^2
+      
+        
+      FCR = 4.6, # feed conversion ratio inputs/outputs [alg/fish]. average 3.6-5.6 for 3% and 5% BW feeding ratios. This at 4.6 FCR could be high compared to some other studies
+      
+      RQ = 0.82, # respiration coefficient from Serpa, et al, 2013 dimensionless
+      
+      exc = a_ex*(FA/alg_energy - eg), # [g alg g fish^-1 6hr^-1] excretion rate
+      
+      # FISH DENSITY
+      fingerling_energy = adult_energy*fingerling_mass, # [kJ per fingerling]
+      
+      Fcarr = 56, # [g/m^2] carrying capacity for fish in He‘eia Fishpond, 500 pounds per acre
+
+      # NITROGEN LOADING
+      LU_No = 1.8, # [g/m^3] organic N concentration in wetland for current land use
+      LU_Na = 0.07, # [g/m^3] ammonium N concentration in wetland for current land use
+      LU_Ni = 0.07 # [g/m^3] nitrate N concentration in wetland for current land use
+
+)
+
+pars_restored = c(
+      No_inc = 0.22, # [g/m^3]
+      Na_inc = 0.009, # [g/m^3]
+      Ni_inc = 0.009, # [g/m^3]
+      
+      # Nitrogen loading from submarine groundwater discharge. Estimated from Dulai, et al 2016
+      SGD_Na = 670/4, # [g/6hr] NH4+ -N loaded into He'eia Fishpond
+      SGD_Ni = 74/4, # [g/6hr] NO3- -N loaded into He'eia Fishpond
+      
+      # 670 and 74 for total ~744
+      
+      # Nitrogen reaction rates
+      k_oa = 0.1/4, # [1/6hr] conversion of organic N to ammonium N
+      k_ao = 0.1/4, # [1/6hr] conversion of ammonium N to organic N 
+      k_nit = 0.5/4, # [1/6hr] nitrification (ammonium N -> nitrate N) in water column
+      k_nit_red = 0.5/4, # [1/6hr] reduction of nitrate N to ammonium N. Originally 0.1/4
+      k_av = 0.7/4, # [1/6hr] ammonium to ammonia (gas) volatilization rate
+      k_nit_sed = 0.05/4, # [1/6hr] nitrification (ammonium N -> nitrate N) rate in the sediment
+      k_denit = 0.01/4, # [1/6hr] denitrification rate (nitrate to N2 gas)
+      
+      Temp = 25, # ºC, need to double check theaverage temperature from Kiana's data
+  
+      
+      # Fishpond water-sediment exchange rate constants
+      k_r = 0.1/4, # [1/6hr] resuspension rate
+      k_s = 0.8/4, # [1/6hr] settling rate, used to be 0.05 /day. If going to make it this high, maybe it should just be related to phytoplankton settling rate due to their size. Burdoff and Lorenzen suggest 0.8 /day
+      # figures look a little different with 0.05 /day but still retain generally the same shape
+      k_b = 0.001/4, # [1/6hr] burial removal rate [1/6hr] 
+      
+      r_NChl = 0.2, # [g N/g Chla] ratio of nitrogen to Chl-a in algae
+      k_ra = 0.1/4, #0.025/4, # [1/6hr] algae respiration rate
+      k_ag = 1.5/4, # [1/d] algae growth rate constant at 20ºC
+      #k_fg = 0.015/4, # rate of fish growth due to algae consumption [1/6hr]
+      # K for mullet is 0.27 1/yr -> 0.0007 1/day, this is lower than the current growth rate but the current growth rate also seems particularly low
+      k_ad = 0.09/4, # [1/6hr] rate of algae death, Jamu and Piedrahita, 0.01-0.09 1/d range
+      
+      
+      # From Barman, Jana, Garg, Bhatnagar, https://link.springer.com/article/10.1007/s10499-004-2479-5
+      # growth rate for M. cephalus in salinity 20 ppt 0.69 g/d or 0.67 g/d in 25 ppt
+      # SGR --specific growth rate of weight-- (% BW (in grams) per day) about 4% per day
+      k_birth = 0.35/365/4, # [1/6hr]
+      
+      # nitrogen concentrations in ocean - units g/m^3
+      No_ocean = 0.001, # need to revisit these parameters. https://www.sciencedirect.com/science/article/pii/S030438000500164X#bib30 is a good source or Smith et al 1981
+      Na_ocean = 0.0024, # also maybe a little high. Some data from Kaneohe bay indicates 0.002. Used to be 0.04 in the model
+      Ni_ocean = 0.0068, # this may even be a little high relative to the bay being closer to 0.005 g/m^3. Used to be 0.02
+      
+      # water volume flux rate (m^3/6hr)
+      sp_fl= 191660/4,
+      sp_ebb = -174880/4,
+      np_fl = 141384/4,
+      np_ebb = -159938/4,
+      
+      r_mugil = r_mugil_est,
+      M_mugil = M_mugil_est,
+      Fmsy_mugil = Fmsy_mugil_est,
+      
+      # historic estimated yields of 33-56 g/m^2/yr (300-500 lb/acre)
+      # minimum yield for Oahu is 33.6 g/m^2
+      
+      historic_MSY_min = 33, # g/m^2/yr, minimum MSY for history yields
+      historic_MSY_max = 56, # g/m^2/yr, maximum MSY for historic yields
+      historic_MSY_avg = (historic_MSY_max + historic_MSY_min)/2,
+      
+      # MSY = r*K/4 ---> K = MSY/r*4, where K is the carrying capacity and r is the intrinsic growth rate for that species
+      K_min = historic_MSY_min*4/r_mugil, # g/m^2, minimum carrying capacity
+      K_max = historic_MSY_max*4/r_mugil, # g/m^2, maximum carrying capacity
+      K_avg = (K_min + K_max)/2, # g/m^2, average carrying capacity
+      
+      
+      # FISH CONSUMPTION ENERGY AND MASS PARAMETERS
+      # 126 kJ gross energy (GE) / kg body weight for daily maintenance but 1446.7 kJ GE / kg BW is recommended for maximum growth
+      
+      # estimate carrying capacity for phytoplankton. At minimum there has to be enough algae to support the historic fish yields
+      # there were also possible sources of food so alg doesn't need to account for all of the calories consumed, but also need to account for inefficiencies in use of food that is consumed
+      
+      
+      # not in love with the initial version of the calculation below. Might want to find a way to actually do it with the carrying capacity
+      K_alg = historic_MSY_max*FA*365*4/eff/alg_energy, # g alg / (m^2)
+
+      K_hs_fish = 2*10^5*14/A_fp,
+        #10^-7*10^10*10^-3 # g/m^2, half-saturation for fish consuming algae, suggested value from https://www.sciencedirect.com/science/article/pii/S2351989414000420 converted from kg/L to kg/km^2 to g/m^2
+      
+        
+      FCR = 4.6, # feed conversion ratio inputs/outputs [alg/fish]. average 3.6-5.6 for 3% and 5% BW feeding ratios. This at 4.6 FCR could be high compared to some other studies
+      
+      RQ = 0.82, # respiration coefficient from Serpa, et al, 2013 dimensionless
+      
+      exc = a_ex*(FA/alg_energy - eg), # [g alg g fish^-1 6hr^-1] excretion rate
+      
+      # FISH DENSITY
+      fingerling_energy = adult_energy*fingerling_mass, # [kJ per fingerling]
+      
+      Fcarr = 56, # [g/m^2] carrying capacity for fish in He‘eia Fishpond, 500 pounds per acre
+
+      # NITROGEN LOADING
+      LU_No = 1.8, # [g/m^3] organic N concentration in wetland for current land use
+      LU_Na = 0.07, # [g/m^3] ammonium N concentration in wetland for current land use
+      LU_Ni = 0.07 # [g/m^3] nitrate N concentration in wetland for current land use
+)
+
+pars_urban = c(
+      No_inc = 0.56, # [g/m^3]
+      Na_inc = 0.023, # [g/m^3]
+      Ni_inc = 0.023, # [g/m^3]
+      
+      # Nitrogen loading from submarine groundwater discharge. Estimated from Dulai, et al 2016
+      SGD_Na = 670/4, # [g/6hr] NH4+ -N loaded into He'eia Fishpond
+      SGD_Ni = 74/4, # [g/6hr] NO3- -N loaded into He'eia Fishpond
+      
+      # 670 and 74 for total ~744
+      
+      # Nitrogen reaction rates
+      k_oa = 0.1/4, # [1/6hr] conversion of organic N to ammonium N
+      k_ao = 0.1/4, # [1/6hr] conversion of ammonium N to organic N 
+      k_nit = 0.5/4, # [1/6hr] nitrification (ammonium N -> nitrate N) in water column
+      k_nit_red = 0.5/4, # [1/6hr] reduction of nitrate N to ammonium N. Originally 0.1/4
+      k_av = 0.7/4, # [1/6hr] ammonium to ammonia (gas) volatilization rate
+      k_nit_sed = 0.05/4, # [1/6hr] nitrification (ammonium N -> nitrate N) rate in the sediment
+      k_denit = 0.01/4, # [1/6hr] denitrification rate (nitrate to N2 gas)
+      
+      Temp = 25, # ºC, need to double check theaverage temperature from Kiana's data
+  
+      
+      # Fishpond water-sediment exchange rate constants
+      k_r = 0.1/4, # [1/6hr] resuspension rate
+      k_s = 0.8/4, # [1/6hr] settling rate, used to be 0.05 /day. If going to make it this high, maybe it should just be related to phytoplankton settling rate due to their size. Burdoff and Lorenzen suggest 0.8 /day
+      # figures look a little different with 0.05 /day but still retain generally the same shape
+      k_b = 0.001/4, # [1/6hr] burial removal rate [1/6hr] 
+      
+      r_NChl = 0.2, # [g N/g Chla] ratio of nitrogen to Chl-a in algae
+      k_ra = 0.1/4, #0.025/4, # [1/6hr] algae respiration rate
+      k_ag = 1.5/4, # [1/d] algae growth rate constant at 20ºC
+      #k_fg = 0.015/4, # rate of fish growth due to algae consumption [1/6hr]
+      # K for mullet is 0.27 1/yr -> 0.0007 1/day, this is lower than the current growth rate but the current growth rate also seems particularly low
+      k_ad = 0.09/4, # [1/6hr] rate of algae death, Jamu and Piedrahita, 0.01-0.09 1/d range
+      
+      
+      # From Barman, Jana, Garg, Bhatnagar, https://link.springer.com/article/10.1007/s10499-004-2479-5
+      # growth rate for M. cephalus in salinity 20 ppt 0.69 g/d or 0.67 g/d in 25 ppt
+      # SGR --specific growth rate of weight-- (% BW (in grams) per day) about 4% per day
+      k_birth = 0.35/365/4, # [1/6hr]
+      
+      # nitrogen concentrations in ocean - units g/m^3
+      No_ocean = 0.001, # need to revisit these parameters. https://www.sciencedirect.com/science/article/pii/S030438000500164X#bib30 is a good source or Smith et al 1981
+      Na_ocean = 0.0024, # also maybe a little high. Some data from Kaneohe bay indicates 0.002. Used to be 0.04 in the model
+      Ni_ocean = 0.0068, # this may even be a little high relative to the bay being closer to 0.005 g/m^3. Used to be 0.02
+      
+      # water volume flux rate (m^3/6hr)
+      sp_fl= 191660/4,
+      sp_ebb = -174880/4,
+      np_fl = 141384/4,
+      np_ebb = -159938/4,
+      
+      r_mugil = r_mugil_est,
+      M_mugil = M_mugil_est,
+      Fmsy_mugil = Fmsy_mugil_est,
+      
+      # historic estimated yields of 33-56 g/m^2/yr (300-500 lb/acre)
+      # minimum yield for Oahu is 33.6 g/m^2
+      
+      historic_MSY_min = 33, # g/m^2/yr, minimum MSY for history yields
+      historic_MSY_max = 56, # g/m^2/yr, maximum MSY for historic yields
+      historic_MSY_avg = (historic_MSY_max + historic_MSY_min)/2,
+      
+      # MSY = r*K/4 ---> K = MSY/r*4, where K is the carrying capacity and r is the intrinsic growth rate for that species
+      K_min = historic_MSY_min*4/r_mugil, # g/m^2, minimum carrying capacity
+      K_max = historic_MSY_max*4/r_mugil, # g/m^2, maximum carrying capacity
+      K_avg = (K_min + K_max)/2, # g/m^2, average carrying capacity
+      
+      
+      # FISH CONSUMPTION ENERGY AND MASS PARAMETERS
+      # 126 kJ gross energy (GE) / kg body weight for daily maintenance but 1446.7 kJ GE / kg BW is recommended for maximum growth
+      
+      # estimate carrying capacity for phytoplankton. At minimum there has to be enough algae to support the historic fish yields
+      # there were also possible sources of food so alg doesn't need to account for all of the calories consumed, but also need to account for inefficiencies in use of food that is consumed
+      
+      
+      # not in love with the initial version of the calculation below. Might want to find a way to actually do it with the carrying capacity
+      K_alg = historic_MSY_max*FA*365*4/eff/alg_energy, # g alg / (m^2)
+      
+      K_hs_fish = 2*10^5*14/A_fp,
+        #10^-7*10^10*10^-3 # g/m^2, half-saturation for fish consuming algae, suggested value from https://www.sciencedirect.com/science/article/pii/S2351989414000420 converted from kg/L to kg/km^2 to g/m^2
+      
+      
+        
+      FCR = 4.6, # feed conversion ratio inputs/outputs [alg/fish]. average 3.6-5.6 for 3% and 5% BW feeding ratios. This at 4.6 FCR could be high compared to some other studies
+      
+      RQ = 0.82, # respiration coefficient from Serpa, et al, 2013 dimensionless
+      
+      
+      exc = a_ex*(FA/alg_energy - eg), # [g alg g fish^-1 6hr^-1] excretion rate
+      
+      # FISH DENSITY
+      fingerling_energy = adult_energy*fingerling_mass, # [kJ per fingerling]
+      
+      Fcarr = 56, # [g/m^2] carrying capacity for fish in He‘eia Fishpond, 500 pounds per acre
+
+      # NITROGEN LOADING
+      LU_No = 1.8, # [g/m^3] organic N concentration in wetland for current land use
+      LU_Na = 0.07, # [g/m^3] ammonium N concentration in wetland for current land use
+      LU_Ni = 0.07 # [g/m^3] nitrate N concentration in wetland for current land use
+)
+```
+
+```{r}
+solveFish <- function(pars, times = seq(0, 300, by = 1/365/4)) {
+  fish_func6 <- function(times, state, pars) {
+  with(as.list(c(state, pars)), {
+    
+    # create an integer counter variable, time is otherwise in 6 hr intervals
+    step = times*365*4 
+    
+    # the current year is defined as the rounded up integer year value of the current time step
+    yr_curr = ceiling(times) # e.g. t= 0.5 is considered year 1. t = 1.2 is considered year 2. 
+    
+    # define flow terms- m^3/d
+    # initializing this model to conditions on Jan. 1, 2014.
+    if (step %% 64 < 33){
+      # start with the first 32 spring tide cycles
+      if (as.integer(step) %% 2 == 0)
+        # alternate between spring flood and spring ebb based on being an even or odd step
+        Q_tide = sp_fl
+      else
+        Q_tide = sp_ebb
+    }
+    else{
+      # shift to  32 neap tides
+      if(as.integer(step) %% 2 == 0)
+        # alternate between neap flood and neap ebb based on being an even or odd step
+        Q_tide = np_fl
+      else
+        Q_tide = np_ebb
+    }
+
+    
+    # Specify He'eia stream flow rates based on USGS gauge daily flow averages from 1914-2019
+    # Q_st is defined below in units of m^3 / 6 hours from m^3 / day
+    if(step %% 365 != 0)
+      Q_st = st_clean$mean[step %% 365]/4 
+    else
+      Q_st = st_clean$mean[365]/4 # account for Dec 31 case when step = 365 so 365 %% 365 would equal 0
+    
+    # Use the number of years that have passed to determine the nitrogren loading based on the relative 
+    #changes in the land use to the other land uses from the current condition. After 20 years, each of 
+    # the scenarios will have reached their expected loading rate per that land use.
+    if(times < 20){
+      W_No = (LU_No + No_inc*yr_curr)*Q_st # loading rate of organic N into the stream
+      W_Na = (LU_Na + Na_inc*yr_curr)*Q_st # loading rate of ammonium N into the stream
+      W_Ni = (LU_Ni + Ni_inc*yr_curr)*Q_st # loading rate of nitrate N into the stream
+    } else {
+      W_No = (LU_No + No_inc*20)*Q_st # loading rate of organic N into the stream
+      W_Na = (LU_Na + Na_inc*20)*Q_st # loading rate of ammonium N into the stream
+      W_Ni = (LU_Ni + Ni_inc*20)*Q_st # loading rate of nitrate N into the stream
+    }
+
+    # Fish weight as a function of time based on von Bertalanffy growth parameters [g]
+    W_fish = Winf_mugil*(1-exp(-K_mugil*(times-t0_mugil)))^b_mugil 
+  
+    resp_o2 = 10^(-0.17*log10(W_fish) + 2.49) # [mg O2 kg fish^-1 hr^-1] based on fish base equation 
+    c_resp = resp_o2*RQ*c_mw/o2_mw*10^-6 # [g C g fish^-1 6hr^-1]
+    FC = c_resp*c_energy/c_mw*6 # [kJ g fish^-1 6hr^-1]  respiration energy per fish
+    Na_exc = c_resp/alg_CN # [g N-NH3 g fish^-1 6hr^-1] nitrogen excretion in the form of ammonium
+    #FB = *N # [g fish/m^2] Biomass of fish in 
+      
+      
+    ## PHYTOPLANKTON GROWTH - primarily derived from Burford and Lorenzen 2002
+    # growth rate: g = g_alg_max * L_light * L_N 
+    # phytoplankton growth is at its maximum except when limited by light or nutrients (nitrogen)
+    g_alg_max = 2/4 # [6 hr^-1] max phytoplankton growth rate for 6 hour period ~1.45 was used in the Lorenzen study and 
+    # 1.5 is used elsewhere. 0.5 is used in the Turner NPC study. Smith Kaneohe Bay 1981 suggests growth rates of 0.7 day^1
+    
+    # phytoplankton Nitrogen assimilation rate is 0.003 mol/m^3/day according to Smith, et al. 1981
+    
+    # https://www.hindawi.com/journals/jmb/2013/684739/ suggests a max growth rate of 5.9 day^-1 for diatoms
+    k_chl = 14 # [m^-1 g Chl ^-1] light extinction caused by Chl-a
+    k_other = 2.5 # [m^-1] light extinction caused by non Chl-a factors
+    c_chl = 30 #  ratio of carbon to Chl-a in algae by mass
+    #k_ext = k_chl*alg/c_chl*A_fp + k_other# [m^-1] light extinction coefficient
+    k_ext = 0.0138 # [m^-1] from Lorenzen, C.J., 1972
+    z = h_fp/2 # [m] average depth of He‘eia Fishpond
+    
+    # Monthly solar irradiance [W/m^2] near He‘eia Fishpond based on Univ. of Hawai'i data
+    if(step %% 365 != 0)
+      I0 = daily_solar$irradiance[step %% 365]/4 
+    else
+      # account for Dec 31 case when step = 365 so 365 %% 365 would equal 0
+      I0 = daily_solar$irradiance[365]/4  
+  
+    I_sat = 60 # [W/m^2] saturating sunlight intensity for phytoplankton growth. 
+    # Converted from 275 μmol photons m−2 s−1 (Gao, et al, 2007) using this unit converter: 
+    # http://www.egc.com/useful_info_lighting.php
+    
+    # Calculate light limitation factor
+    L_light = exp(1)/k_ext*(exp(-I0/I_sat*exp(-k_ext*z))) - exp(-(I0/I_sat))
+    
+    k_SN <- 0.015 # [g/m^3] half saturation for nitrogen. 
+    
+    L_N <- (Na_fp + Ni_fp)/(Na_fp + Ni_fp + k_SN) # Nitrogen limiting component of algae growth
+    
+    N_Chl <- 13 # N/Chl-a ratio of algae
+
+    #g_alg <- g_alg_max*L_light*L_N
+    g_alg <- g_alg_max*L_N
+    
+    # Stream organic N [g/m^3] 
+    dNo_st <- (W_No - Q_st*No_st)/V_st -k_oa*No_st + k_ao*Na_st
+    # Stream ammonium [g/m^3]  
+    dNa_st <- (W_Na - Q_st*Na_st)/V_st + k_oa*No_st - (k_ao+k_nit+k_av)*Na_st + k_nit_red*Ni_st
+    # Stream nitrate [g/m^3]  
+    dNi_st <- (W_Ni- Q_st*Ni_st)/V_st + k_nit*Na_st - k_nit_red*Ni_st
+    # Fishpond water organic N [g/m^3]  
+    dNo_fp <- (Q_st*No_st + Q_tide*(No_ocean-No_fp))/V_fp + (-k_oa-k_s)*No_fp + k_ao*Na_fp + k_r*No_sd
+    # Fishpond water ammonium [g/m^3]     
+    dNa_fp <- (Q_st*Na_st + SGD_Na + Q_tide*(Na_ocean-Na_fp))/V_fp - k_oa*No_fp - (k_ao+k_nit+k_av+k_s)*Na_fp + k_r*Na_sd + ((-g_alg + k_ra)*alg + (eg + exc)*fish)/alg_CN/h_fp*(Na_fp/(Na_fp+Ni_fp))
+    # Fishpond water nitrate [g/m^3]  
+    dNi_fp <- (Q_st*Ni_st + SGD_Ni + Q_tide*(Ni_ocean-Ni_fp))/V_fp + k_nit*Na_fp-k_s*Ni_fp+k_r*Ni_sd + (-g_alg + k_ra)*alg/alg_CN/h_fp*(Ni_fp/(Na_fp+Ni_fp))
+    # Sediment organic N [g/m^3]   
+    dNo_sd <- k_s*No_fp - (k_oa+k_b+k_r)*No_sd + k_ao*Na_sd + k_s*alg/alg_CN/h_fp*(No_fp/(Na_fp+No_fp))
+    # Sediment ammonium [g/m^3]  
+    dNa_sd <- k_s*Na_fp + k_oa*No_sd - (k_ao+k_nit_sed+k_r+k_b)*Na_sd + k_nit_red*Ni_sd + k_s*alg/alg_CN/h_fp*(Na_fp/(Na_fp+No_fp))
+    # Sediment nitrate [g/m^3]    
+    dNi_sd <- k_s*Ni_fp+k_nit_sed*Na_sd-(k_denit+k_nit_red+k_r+ k_b)*Ni_sd
+    # Algae density [g/m^2]
+      
+    Ing <- FA/alg_energy # [g alg * g fish ^-1 * day^-1], 
+    #ingestion rate of algae by fish based on M. cephalus anabolic requiements and energy density of algae
+    
+    dalg <- alg*(g_alg*(1-alg/K_alg) - k_s + k_ra) - Ing*alg*fish/(alg + K_hs_fish)
+    
+    # Algae stocking rate in M. cephalus hatchery experiment in Makapuu, HI would stock with 500,000 cells/mL of algae 
+    # (phytoplankton Nannochloropsis oculata)
+  
+    # Fish density-  fish are reproducing after 2 years
+    if (times > 2) {
+      if(step %% 366 < 91 | step %% 366 > 334) { 
+        catch_rate = 0 # Closed season (Dec 1 to March 31)
+        # there should be fish mass losses due to reproduction
+      }
+      else{
+        catch_rate = Fmsy_mugil # harvest after 2 years during times of year outside of the closed season
+      }
+    }
+    else {
+      catch_rate = 0 # no harvesting if there are no fish that are at least 2 years old
+    }
+    
+   
+    # assume general logistic growth for the fish population
+
+    # previously: dfish <- Ing*alg*fish*(1-fish/K_avg) - M_mugil*fish^2 - catch_rate*fish^2 
+    dfish <- 1/FCR*Ing*alg*fish/(alg + K_hs_fish)*(1-fish/K_avg) - M_mugil*fish - catch_rate*fish 
+    #dfish <- 1/FCR*Ing*alg*fish/(alg + K_hs_fish)*(1-fish/K_avg) - M_mugil*fish - catch_rate*fish 
+    
+    #dfish <- fish*((1/FCR)*Ing*alg/(w*fish + alg)*(1-fish/K_avg) - M_mugil - catch_rate)
+    
+    f_sgr = 1.02/4 # [6 hr^-1] Wassef, et al 2002. specific growth rate suggested 2% day^-1
+      
+    return(list(c(No_st = dNo_st, Na_st = dNa_st, Ni_st = dNi_st, No_fp = dNo_fp, Na_fp = dNa_fp, Ni_fp = dNi_fp, No_sd = dNo_sd, Na_sd = dNa_sd, Ni_sd = dNi_sd, alg = dalg, fish = dfish), caught = catch_rate*fish))
+
+})
+}
+
+state <- c(
+           No_st = 0.148, # [g/m^3] stream initial organic N
+           Na_st = 0.006, # [g/m^3] stream initial ammonium
+           Ni_st = 0.006, # [g/m^3] stream initial nitrate
+           No_fp = 0.1, # [g/m^3] fishpond initial organic N, estimated from Charles Young thesis
+           Na_fp = 0.03, # [g/m^3] fishpond initial ammonium, originally 0.035. The mean for the data is 0.02
+           Ni_fp = 0.68, # [g/m^3] fishpond initial nitrate, originally 0.675
+           No_sd = 0.05, # [g/m^3] fishpond sediment initial organic N, estimated from Young thesis
+           Na_sd = 0.45, # [g/m^3] fishpond sediment initial ammonium. Sediment is a source according to Hargreaves (1998)
+           Ni_sd = 0.01, # [g/m^3]  fishpond sediment initial nitrate. Sediment is a sink according to Hargreaves (1998).
+           alg = 0.03, # [g/m^2] model was working with alg = 0.5. Before it was 0.018. initial algae concentration based on average of data from Frank, et al, 2016 (0.0015 g Chl a/m^3) to g/m^2 algae. 0.0015 g Chla/m^3 * 30 carbon/Chl * 0.4m.
+           # carbon to chlorophyll ratio (w/w) is 30 (Parsons et al 1984)
+           # previously suggested algae to Chl ratio was 0.02 g algae/g Chla from the literature
+           # range of conversion factors [g alg/g Chla] from Chapra 0.005-0.025. Would be 0.12 g/m^2 algae if used 0.005
+           #N = 5000/A_fp,
+           #FB = fingerling_mass*5000,
+           
+           fish = 10 # [g/m^2] initial mullet  density (was 3.2)
+           )
+
+  return(ode(y = state, times = times, func = fish_func6, parms = pars, method = "euler"))
+}
+```
+
+```{r}
+#out_control_new <- solveFish(pars = pars_control)
+```
+
+
+```{r}
+#plot(out_control_new)
+```
+
+
+# Sensitivity analysis using FME package
+### Global sensitivity
+```{r}
+
+parRanges <- data.frame(min = c(0, 0, 0, 670/4*.8, 74/4*.8, K_min), 
+                        max = c(0, 0, 0, 670/4*1.2, 74/4*1.2, K_max))
+
+rownames(parRanges) <- c("No_inc", "Na_inc", "Ni_inc", "SGD_Na", "SGD_Ni", "K_avg")
+```
+
+```{r}
+Sens_control <- summary(sensRange(func = solveFish, parms = pars_control, dist = "latin", sensvar = c("No_fp", "Na_fp", "Ni_fp", "No_sd", "Na_sd", "Ni_sd", "alg", "fish"), parRange = parRanges, num = 50))
+
+```
+
+
+```{r}
+plot(Sens_control, main = "Sensitivity", xlab = "time, years", ylab = "g N/m^3")
+```
+
+
+```{r}
+# Not the most useful plot
+#matplot(out_control_new[,1], out_control_new[,2:10], type = "l", lty = 1:9, col = "black", xlab = "time, years", ylab = "g N/m3")
+#legend("topright", c("No_st", "Na_st", "Ni_st", "No_fp", "Na_fp", "Ni_fp", "No_sd", "Na_sd", "Ni_sd"), lty = 1:3, lwd = c(2, 2, 1))
+```
+
+
+```{r}
+summ.sR <- summary(sR)
+par(mfrow=c(2, 2))
+plot(summ.sR, xlab = "time, years", ylab = "g N/m3", legpos = "topright", mfrow = NULL)
+
+plot(summ.sR, xlab = "time, years", ylab = "g N/m3", mfrow = NULL, quant = TRUE, col = c("lightblue", "darkblue"), legpos = "topright")
+
+mtext(outer = TRUE, line = -1.5, side = 3, "Sensitivity to rB", cex = 1.25)
+par(mfrow = c(1, 1))
+```
+
+
+### Local sensitivity

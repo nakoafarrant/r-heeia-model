@@ -5,7 +5,7 @@ date: "4/22/2020"
 output: html_document
 ---
 
-This is a more complicated version of the model that draws inspiration in form amd rate constants from the Tanaka and Mackenzie, 2005 nitrogen model for southern Kane'ohe Bay
+This is a more complicated version of the model that draws inspiration in form and rate constants from the Tanaka and Mackenzie, 2005 nitrogen model for southern Kane'ohe Bay
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -30,7 +30,7 @@ library(FishLife)
 ```{r}
 #by defaulth FishLife uses most-recent published database version. Includes both parameters from FishBase and stock-recruit parameters estimated using the RAM Legacy stock-recruit database
 
-# basic form that should use themost updated data
+# basic form that should use the most updated data
 # Predict = Plot_taxa(Search_species(Genus="Mugil",Species = "cephalus")$match_taxonomy, mfrow=c(2,2))
 
 # the following code fails because it seems like the data base parameter doesn't work specifically for M. cephalus
@@ -157,7 +157,7 @@ T_fp_mean = mean(temp_summ$temp_mean) # annual average temperature in Heeia fish
 temp_plot <- ggplot(temp_full, aes(x=temp_avg)) + geom_histogram() +
   facet_wrap(temp_full$MM)
 
-#temp_plot # ideally you would add diurnal temperature variability to each time step such that morning and night time steps are cooler and day time termpatures are warmer
+#temp_plot # ideally you would add diurnal temperature variability to each time step such that morning and night time steps are cooler and day time temperatures are warmer
 ```
 
 ```{r}
@@ -340,14 +340,14 @@ fish_func6 <- function(t, state6, pars6) {
       # Converted from 275 μmol photons m−2 s−1 (Gao, et al, 2007) using this unit converter: 
       # http://www.egc.com/useful_info_lighting.php
       
-      # indicate what the incident light is for that day based on monthly averages near He'eia fishpond that are converted into Langleys/day
+      # indicate what the incident light is for that day based on monthly averages near He'eia fishpond that are converted into Langleys/6 hr
       if(step %% 365 != 0)
         I0 = solar_langday$I_LangDay[step %% 365]/4 
       else
         I0 = solar_langday$I_LangDay[365]/4 
       
       # optimal irradiance to yield maximum primary production
-      I_opt = 300/4 # Langleys/day
+      I_opt = 300/4 # Langleys/6hr
     
       # variables
       A4 = 7.5*10^2/365/4 # (1/6hr) max uptake rate by pelagic autotrophs
@@ -361,16 +361,16 @@ fish_func6 <- function(t, state6, pars6) {
       c_a7 = 1.5/10^3 #(m^3/mol N) exponential degree of ammonium inhibition on nitrate uptake by benthic autotrophs
       
       c_b = 0.6 # ratio of bacterial uptake of ammonium to DON
-      c_dec = 2.52/365/4 # (1/6hr) raction of PON decomposed to DON
-      c_dep = 3.6*10^2/365/4 # (m/6hr) sinking rate of PON in the water column
+      c_dec = 2.52/365/4 # (1/6hr) fraction of PON decomposed to DON
+      c_dep = 1.1*10^2/365/4 # (m/6hr) sinking rate of PON in the water column (this aligns with Humborg 2000 0.3 m/day)
       c_ds = 15 # (m^2/mol N) attenuation coefficient of phytoplankton
       c_g8 = 5.45 # preferential uptake by benthic heterotrophs feeding on benthic autotrophs over pelagic N
-      c_k4 = 5.0*10^-4 # (mol N/m^3) half-saturation constant for the uptake of ammonium and nitrate by pelagic autogtrophs
-      c_k7 = 5.0*10^-4 # (mol N/m^3) half-saturation constant for the uptake of ammonium and nitrate by benthic autogtrophs
+      c_k4 = 2.5e-4 # (mol N/m^3) half-saturation constant for the uptake of ammonium and nitrate by pelagic autotrophs (2.5e-4 comes from Humborg et al 2000)
+      c_k7 = 2.5e-4 # (mol N/m^3) half-saturation constant for the uptake of ammonium and nitrate by benthic autgtrophs
       c_MM = 3.0 # power coefficient of the Michaelis-Menten function
       c_pi = 0.85 # correction term for the effect of surface photo-inhibition during midday
       c_pp = 0.381 # average photoperiod as a fraction of the day
-      c_reg = 0.4 # fraction of the regenerated DIN to total PON accumulated in teh sediments
+      c_reg = 0.4 # fraction of the regenerated DIN to total PON accumulated in the sediments
       c_reg1a = 0.815 # fraction of ammonium regenerated to total DIN regeneration
       c_reg1n = 0.185 # fraction of nitrate regeneration to total DIN regeneration
       c_res = 0.74 # fraction of resuspended PON to total sinking PON
@@ -379,7 +379,7 @@ fish_func6 <- function(t, state6, pars6) {
       
       #d6 = (0.334+1.401)/365/4 # (1/6hr) combined natural and fishing mortality rates for M. cephalus
       # the above approach with natural + fishing mortality caused the model to crash worse
-      d6 = 6.08*10^1/365/4 # (1/6hr) mortality rate of pelagic heterotrophs
+      d6 = (2.3e-4)/365/4 # (1/6hr) mortality rate of pelagic heterotrophs
       d8 = 2.28*10^1/365/4 # (1/6hr) mortality rate of benthic heterotrophs
       
       f_denit = 1.9*10^6/365/4*0.0018 # (mol N/6hr) initial magnitude of gross denitrification flux from pelagic and benthic systems
@@ -391,10 +391,14 @@ fish_func6 <- function(t, state6, pars6) {
       g6 = 1.46*10^2/365/4 # (1/6hr) max growth rate of pelagic heterotrophs
       
       P4 = 6.4*10^4*0.0018 # (mol N), half-saturation constant of nutrient assimilation kinetics by pelagic autotrophs; sum of the ammonium and nitrate reservoirs
-      P5 = 5.4*10^5*0.0018 # all of these half saturation constants were calculated relative to the size of the reservoirs in the Southern Kaneohe Basin which has more than 100x the volume of Heeia Fishpond. The 0.0018 is a correction factor relative to the volume ratio of Heeia FP: Kaneohe Bay southern basin assuming that the two water bodies have similar compositions
-      P6 = 2.0*10^5*0.0018
-      P7 = 6.4*10^4*0.0018
-      P8 = 1.49*10^5*0.0018
+      
+      #P5 = 7.67e5*0.0018
+      #P5 = 600*0.0018 #this made the peak value for N5_fp larger than when P5 uses 5.4e5, but the shape of the graph stayed about the same with N5 crashing by 50 years
+      # original P5 below
+      P5 = 5.4*10^5*0.0018 # (mol N) all of these half saturation constants were calculated relative to the size of the reservoirs in the Southern Kaneohe Basin which has more than 100x the volume of Heeia Fishpond. The 0.0018 is a correction factor relative to the volume ratio of Heeia FP: Kaneohe Bay southern basin assuming that the two water bodies have similar compositions
+      P6 = 2.0*10^5*0.0018 # (mol N)
+      P7 = 6.4*10^4*0.0018 # (mol N)
+      P8 = 1.49*10^5*0.0018 # (mol N)
       
       q4 = 0.8 # fraction of assimilated nutrients converted to biomass by pelagic autotrophs
       q5 = 0.6 # fraction of ingested food converted to biomass by pelagic heterotrophic bacteria
@@ -422,11 +426,14 @@ fish_func6 <- function(t, state6, pars6) {
       # Characterize biological metabolism components of the model
       
       # Pelagic autotrophs (phytoplankton)
-      I4 = c_pi*c_pp*exp(1)/(c_w*h_fp + c_ds*((N3_fp + N4_fp)*V_fp)*h_fp)*(exp((-I0/I_opt)*exp(-c_w*h_fp - c_ds*((N3_fp + N4_fp)*V_fp)*h_fp)) - exp(-I0/I_opt))/4
+      #I4 = 5e-3 # 0.316 having the I4 this high causes the model to crash. Could try lower values
+      
+      I4 = c_pi*c_pp*exp(1)/(c_w*h_fp + c_ds*(N3_fp + N4_fp)*h_fp)*(exp((-I0/I_opt)*exp(-c_w*h_fp - c_ds*(N3_fp + N4_fp)*h_fp)) - exp(-I0/I_opt))/4
       K4 = (((N1a_fp + N1n_fp)*V_fp)^c_MM)/(((N1a_fp +N1n_fp)*V_fp)^c_MM + P4^c_MM)
       T_alpha = exp(0.0633*(T_fp - T_fp_mean))
       
-      F4 = (A4*N4_fp)*I4*K4*T_alpha*V_fp # (mol N/6hr)
+      F4 = (A4*N4_fp)*I4*K4*T_alpha*V_fp # (mol N/6hr) # multiplier of 3 basically max out. 3.5 multiplier is too high
+      
       
       # Pelagic heterotrophic bacteria
       K5 = ((N1a_fp + N2_fp)*V_fp)^c_MM/(((N1a_fp + N2_fp)*V_fp)^c_MM + P5^c_MM)
@@ -437,11 +444,16 @@ fish_func6 <- function(t, state6, pars6) {
       T_beta = exp(0.1*(T_fp - T_fp_mean))
       F6 = A6*N6_fp*K6*T_beta*V_fp # (mol N/6hr)
       
+      
       # Benthic heterotrophs
-      I_R = I0*exp(-c_w*h_sed - c_ds*(N3_fp*V_fp + N4_fp*V_fp)*h_sed) # Langleys/6hr, incident light at sediment surface in Heeia fishpond
+      I_R = 472/4 # 472 Langleys/day converted to Langleys/6 hr based on Tanaka and Mackenzie value
+      # the following calculation for I_R is recommended in the text. Initially attempted to calculate at each time step but I_R stayed at zero even though I0 and all other relevant factors were non-zero
+      #I_R = I0*exp(-c_w*h_sed - c_ds*(N3_fp*V_fp + N4_fp*V_fp)*h_sed) # Langleys/6hr, incident light at sediment surface in Heeia fishpond
       I7 = I_R/I_opt*exp(1-(I_R/I_opt)) # light regulation factor for benthic species
       K7 = ((N1a_fp*V_fp + N1n_fp*V_fp)^c_MM)/((N1a_fp*V_fp +N1n_fp*V_fp)^c_MM + P7^c_MM)
       F7 = (A7*N7_fp)*I7*K7*T_alpha*V_fp # (mol N/6hr)
+      
+      
       
       # Benthic heterotrophs
       K8 = (N3_fp*V_fp + N7_fp*V_fp)^c_MM/((N3_fp*V_fp + N7_fp*V_fp)^c_MM + P8^c_MM)
@@ -450,6 +462,7 @@ fish_func6 <- function(t, state6, pars6) {
       # all of the F flux terms should have units of (mol N/6 hr)
       NF_1a1n = 1.87*10^6/365/4*0.00181 # (mol N/6hr) from Tanaka 2005 rescaled by volume difference of fishpond relative to the southern basin
       NF_1a4 = F4*((N1a_fp/(c_k4 + N1a_fp))/(N1a_fp/(c_k4 + N1a_fp) + N1n_fp/(c_k4 + N1n_fp)*exp(-c_a4*N1a_fp))) # (mol N/6hr)
+      #NF_1a4 = 5.38 # test value for NF_1a4
       S = min(N1a_fp, c_b*N2_fp) 
       NF_1a5 = F5*S/(S+N2_fp) # (mol N/6hr)
       NF_1a7 = F7*((N1a_fp/(c_k7 + N1a_fp))/(N1a_fp/(c_k7 + N1a_fp) + N1n_fp/(c_k7 + N1n_fp)*exp(-c_a7*N1a_fp))) # (mol N/6hr)
@@ -460,7 +473,7 @@ fish_func6 <- function(t, state6, pars6) {
       NF_25 = F5*N2_fp/(S+N2_fp) # (mol N/6hr)
       NF_32 = c_dec*N3_fp # (mol/m^3/6hr) 
       NF_36 = F6*N3_fp/(N3_fp + N4_fp + N5_fp) # (mol N/6hr)
-      NF_38 = F6*N3_fp/(N3_fp + c_g8*N7_fp) # (mol N/6hr)
+      NF_38 = F8*N3_fp/(N3_fp + c_g8*N7_fp) # (mol N/6hr)
       NF_3sed = c_dep/h_fp*N3_fp # (mol/m^3/6hr) 
       NF_41a = r4*F4 # (mol N/6hr)
       NF_42 = s4*F4 # (mol N/6hr)
@@ -484,7 +497,28 @@ fish_func6 <- function(t, state6, pars6) {
       
       
       N_Chl <- 13 # N/Chl-a ratio of algae
-
+      
+      # Account for no fishing during closed seasons and before any of the fish are mature
+      # Also account for fish density changes during spawning (lost mass for energy going to reproductIon. 
+      #Also gained mass from new fish though they aren't ready to harvest)
+      # M. cephalus reproductive season is September through March 
+      # (https://naturalhistory2.si.edu/smsfp/irlspec/Mugil_cephal.htm) 
+      # Going to use HI DLNR closed season for ‘ama‘ama (Dec 1 to March 31)
+      # (https://dlnr.hawaii.gov/dar/files/2016/11/mullet_handout_estuaries.pdf)
+      
+      # fish are reproducing after 2 years
+      if (t > 2) {
+        if(step %% 366 < 91 | step %% 366 > 334) { 
+          catch_rate = 0 # Closed season (Dec 1 to March 31)
+          # there should be fish mass losses due to reproduction
+        }
+        else{
+          catch_rate = Fmsy_mugil # harvest after 2 years during times of year outside of the closed season
+        }
+      }
+      else {
+        catch_rate = 0 # no harvesting if there are no fish that are at least 2 years old
+      }
       
       # Stream ammonium [mol N/m^3]  
       dN1a_st <- (W_N1a - Q_st*N1a_st)/V_st 
@@ -508,8 +542,8 @@ fish_func6 <- function(t, state6, pars6) {
       dN4_fp <- (NF_1a4 + NF_1n4 - NF_41a - NF_42 - NF_46)/V_fp
       # Pelagic heterotrophic bacteria [mol N/m^3]  
       dN5_fp <- (NF_1a5 + NF_25 - NF_51a - NF_52 - NF_56)/V_fp
-      # Pelagic heterotrophs  
-      dN6_fp <- (NF_36 + NF_46 + NF_56 - NF_61a)/V_fp - NF_63
+      # Pelagic heterotrophs  [mol N/m^3]
+      dN6_fp <- (NF_36 + NF_46 + NF_56 - NF_61a)/V_fp - NF_63 - catch_rate*N6_fp
       # Benthic autotrophs, in the previous Kaneohe bay model, benthic components are expressed in mol N/m^2
       dN7_fp <- (NF_1a7 + NF_1n7 - NF_71a - NF_78 - NF_7sed)/V_fp
       # Benthic heterotrophs  
@@ -517,8 +551,10 @@ fish_func6 <- function(t, state6, pars6) {
       # Sediment nitrogen (mol N/m3)  
       d_sed <- (NF_7sed)/V_sed - NF_sed1a - NF_sed1n + NF_3sed - NF_sed3 + NF_8sed 
         
+
+      #print(c(W_N2, Q_tide, N2_bay, N2_fp, NF_25, NF_42, NF_52, NF_32))
       
-      #print(c(NF_1a4, NF_1n4, NF_41a, NF_42, NF_46))
+      #print(c(NF_8sed, NF_7sed, NF_sed1a, NF_sed1n, NF_3sed, NF_sed3))
       
       # Algae density [g/m^2]
       
@@ -543,29 +579,7 @@ fish_func6 <- function(t, state6, pars6) {
       # Algae stocking rate in M. cephalus hatchery experiment in Makapuu, HI would stock with 500,000 cells/mL of algae (phytoplankton Nannochloropsis oculata)
     
       # Fish density
-      
-      # Account for no fishing during closed seasons and before any of the fish are mature
-      # Also account for fish density changes during spawning (lost mass for energy going to reproduciton. Also gained mass from new fish though they aren't ready to harvest)
-      # M. cephalus reproductive season is September through March 
-      # (https://naturalhistory2.si.edu/smsfp/irlspec/Mugil_cephal.htm) 
-      # Going to use HI DLNR closed season for ‘ama‘ama (Dec 1 to March 31)
-      # (https://dlnr.hawaii.gov/dar/files/2016/11/mullet_handout_estuaries.pdf)
-      
-      # fish are reproducing after 2 years
-      if (t > 2) {
-        if(step %% 366 < 91 | step %% 366 > 334) { 
-          catch_rate = 0 # Closed season (Dec 1 to March 31)
-          # there should be fish mass losses due to reproduction
-        }
-        else{
-          catch_rate = Fmsy_mugil # harvest after 2 years during times of year outside of the closed season
-        }
-      }
-      else {
-        catch_rate = 0 # no harvesting if there are no fish that are at least 2 years old
-      }
-      
-     
+
       
       # assume general logistic growth for the fish population
       #dfish <- r_mugil*fish(1-fish/K_avg)
@@ -629,7 +643,7 @@ t <- seq(0, years, by = 1/365/4) # 6 hour time step
 
 yr_ct <- rep(0:years, each = 365*4)
 
-g_a <- vector(mode = "numeric", length = length(t))
+# g_a <- vector(mode = "numeric", length = length(t)) # unsure what this is, don't seem to use it anywhere and just noticed it in the doce
 
 # define physical parameters of ecosystem 
 h_st = 0.5 # [m] average depth of stream 
@@ -741,10 +755,10 @@ alg_energy = 17.6 # [kJ g^-1 algae] energy per gram of Nannochloropsis spp. from
 eff = 0.6 # one estimate of feed conversion efficiency for M. cephalus (assimilates 60% of the food it consumes)
 
 
-# not in love with the initial version of the calculation below. Might want to find a way to actually do it with the carrying capacit
+# not in love with the initial version of the calculation below. Might want to find a way to actually do it with the carrying capacity
 K_alg = historic_MSY_max*FA*365*4/eff/alg_energy # g alg / (m^2)
 
-K_hs_alg = 10^-8*10^10*10^-3 # g/m^2, half-saturation for plant uptake of nitrogen, suggested value from https://www.sciencedirect.com/science/article/pii/S2351989414000420 converted from kg/L to kg/km^2 to g/m^2. This is on some what of a simlar order of magnitude to the K_SN variable from before above
+K_hs_alg = 10^-8*10^10*10^-3 # g/m^2, half-saturation for plant uptake of nitrogen, suggested value from https://www.sciencedirect.com/science/article/pii/S2351989414000420 converted from kg/L to kg/km^2 to g/m^2. This is on some what of a similar order of magnitude to the K_SN variable from before above
 
 K_hs_fish = 2*10^5*14/A_fp
   #10^-7*10^10*10^-3 # g/m^2, half-saturation for fish consuming algae, suggested value from https://www.sciencedirect.com/science/article/pii/S2351989414000420 converted from kg/L to kg/km^2 to g/m^2
@@ -802,7 +816,7 @@ pars_control <- c(
       N3_inc = 0 # [mol/m^3/yr]
 )
 
-# expect total N export in this scenario is an additional 6015 kg/yr (totaling 8515 kg/yr) after 20 years of restoration. This corresponds to 300.75 kg/yr of N added each year for 20 years. With a stream flow rate of 2.49*10^6 m^3/yr, this correspons to a typical total N concentration of 0.12078 g N/m^3 in a year
+# expect total N export in this scenario is an additional 6015 kg/yr (totaling 8515 kg/yr) after 20 years of restoration. This corresponds to 300.75 kg/yr of N added each year for 20 years. With a stream flow rate of 2.49*10^6 m^3/yr, this corresponds to a typical total N concentration of 0.12078 g N/m^3 in a year
 pars_restored <- c(
       N1a_inc = 0.000489, # [mol/m^3/yr]  0.12078 g N/m^3 * 0.073 / 18.039 g/mol ---> mol/m^3/yr
       N1n_inc = 0.000568, # [mol/m^3/yr]  0.12078 g N/m^3 * 0.292 / 62.0049 g/mol ---> mol/m^3/yr
@@ -851,15 +865,22 @@ pars_urban <- c(
 state6 <- c(
            N1a_st = 0.0167*0.5, # [mol N/m^3] stream initial ammonium, derived from Smith et al (1981) pg 303
            N1n_st = 0.0167*0.5, # [mol N/m^3] stream initial nitrate, stream DIN is primarily nitrate
-           N2_st = 0.00843, # [mol N/m^3] stream initial DON
+           N2_st = 0.00843, # [mol N/m^3] stream initial DON. 
            N3_st = 0.02068, # [mol N/m^3] stream initial PON
            N1a_fp = 0.001663, # [mol N/m^3] fishpond initial ammonium, estimated from the southern Kaneohe Bay basin is 0.0005151
            N1n_fp = 0.0110, # [mol N/m^3] fishpond initial nitrate, estimated from the southern Kaneohe Bay basin is 0.0002889
-           N2_fp = 0.00772, # [mol N/m^3] fishpond initial DON, could be 0.00628 from the bay
+           N2_fp = 0.00628, # [mol N/m^3] fishpond initial DON, could be 0.00628 from the bay. Trying the 0.00628 value caused a crash in 50 years. Maybe some uncertainty in this initial concentration
            N3_fp = 0.00163, # [mol N/m^3] fishpond initial PON, estimated from the southern Kaneohe Bay basin
-           N4_fp = 0.0006658, # [mol N/m^3] fishpond initial pelagic autotrophs, estimated from the southern Kaneohe Bay basin
+           N4_fp = 0.00896, # [mol N/m^3] fishpond initial pelagic autotrophs, estimated from the southern Kaneohe Bay   
+           #basin led to 0.0006668 (mol N/m^3). Converting the value from Chla in the heeia_april_tests.Rmd File led to 
+           # 0.000896 mol N/m^3
+           # 0.03 g C/m^2 * (1/0.4 m depth)* 1mol C/12.011g * (15.5 mol N/108 mol C) Redfield ratio in this paper
+           
+           # can't just multiply N4_fp by 10 without changing other input parameters
            N5_fp = 0.0002136, # [mol N/m^3] fishpond initial pelagic heterotrophic bacteria
-           N6_fp = 0.0007538, # [mol N/m^3] fishpond initial pelagic heterotrophs
+           N6_fp = 0.33, # [mol N/m^3] fishpond initial pelagic heterotrophs. Initially 0.0007538 mol N/m^3
+           # using the inital fish concentration of 10 g C/m^2 leads to much larger N6 mol N/m^3 initial concentration
+           # 
            N7_fp = 0.0002387, # [mol N/m^3] fishpond initial benthic autotrophs
            N8_fp = 0.0041458, # [mol N/m^3] fishpond initial benthic heterotrophs
            N9_sed = 98 # [mol N/m^3] fishpond sediment initial N concentration. Smith et al 1981, p. 326
@@ -897,17 +918,18 @@ out_control <- ode(y = state6, times = t, func = fish_func6, parms = pars_contro
 #out_restored <- ode(y = state6, times = t, func = fish_func6, parms = pars_restored, method = "euler")
 #out_urban <- ode(y = state6, times = t, func = fish_func6, parms = pars_urban, method = "euler")
 ```
+
 Analysis of the control scenario:
 # Run the model for 200 years
-Stream: org N stabilizes within 30 years to around 1.5 with little fluctuation. Ammonium and nitrate increase generally for 10-20 years then reach a stable point around 0.11 and 0.08, respectively. These stream values are considerably higher than the initial values and could be causing other issues in other modelcompartments
+Stream: org N stabilizes within 30 years to around 1.5 with little fluctuation. Ammonium and nitrate increase generally for 10-20 years then reach a stable point around 0.11 and 0.08, respectively. These stream values are considerably higher than the initial values and could be causing other issues in other model compartments
 
 Fishpond Water: 
-Organic N stays low near 0.5 or 1 for about 40 years and then starts increasing exponentially from year 50 to about 80 where it reaches a value of aobut 8 and then starts gradually decreasing. Still on the decline from year 100 to 200
+Organic N stays low near 0.5 or 1 for about 40 years and then starts increasing exponentially from year 50 to about 80 where it reaches a value of about 8 and then starts gradually decreasing. Still on the decline from year 100 to 200
 
-Ammonium stays low near 0.02 for 40 years then has a massive spie to about 2.5 around year 50 before dropping right back off again to 0.02. Similarly see nitrate at about 0.07 and then rapicly increases to about 60 starting around year 40 and then drops off again to the very low level by about year 60. These spikes aligns pretty closely with the spike obsered in stream ammonium and nitrate.
+Ammonium stays low near 0.02 for 40 years then has a massive spike to about 2.5 around year 50 before dropping right back off again to 0.02. Similarly see nitrate at about 0.07 and then rapidly increases to about 60 starting around year 40 and then drops off again to the very low level by about year 60. These spikes aligns pretty closely with the spike observed in stream ammonium and nitrate.
 
 Sediment:
-organic N looks very similar in shape to the fishpond water org. N except the concentrations about about 10 times higher in the sedimetn. Similarly see much higher 
+organic N looks very similar in shape to the fishpond water org. N except the concentrations about about 10 times higher in the sediment. Similarly see much higher 
 ammonium has a spike that is a little offset to slightly later years than the spike in water ammonium. There's also a more gradual decay in the ammonium N in the sediment. The concentrations also seem very high
 
 Nitrate in the sediment has very similar trends to Ni_fp, but again with the slight time delay. The concentration decay is still pretty abrupt and not as gradual as Ni in the sediment
@@ -1048,27 +1070,13 @@ Found a new source that suggested a max growth rate for diatoms of 5.9 day^-1, w
 
 The long-term output of the fish model didn't seem to be sensitive to changing the initial algae concentration by increasing from 0.5 to 1.5. virtually no change in the control fish output
 
-# tried a revised structure of the model using type II feeding approach
-major issue of the nitrogen concentrations being way too high in the fishpond water and sediment compartments
-control scenario
-1491.084
-1.688744, 0.1135783, 0.08141123
-9.423938e+187, 2.740911e+187, 3.013846e+187
-8.005332e+188, 6.639281e+188, 9.760706e+187
-2472.092
-97.61679
-14155856
-
-
-why is there a substantial increase in nitrogen concentration when algae density is also increasing? If anything, might have suspected the opposite
-- need to think about the interactions between the algae/fish and nitrogen equations
 
 # remove the fish components from this new structure of the model 
 equations seem more physically reasonable when the fish component is removed from the equation
 
 ```{r}
-plot(out_control) # this issue arose when the SGD contribution was modified from g/day units which were incorrect before to g/6hr units. Need to modify the half saturation by an order of magnitude or add nitrogen via another mechanism. This occured with K_hs_fish at 10^-7. Changing to 10^-6 causes all of these to be problematic for fish growth
-# changing to 10^-8 seemed to "fix" it with alg concentrations reachign the carrying capacity for the control but the concentrations are much lower in the other versions of the model
+plot(out_control) # this issue arose when the SGD contribution was modified from g/day units which were incorrect before to g/6hr units. Need to modify the half saturation by an order of magnitude or add nitrogen via another mechanism. This occurred with K_hs_fish at 10^-7. Changing to 10^-6 causes all of these to be problematic for fish growth
+# changing to 10^-8 seemed to "fix" it with algae concentrations reaching the carrying capacity for the control but the concentrations are much lower in the other versions of the model
 
 # Juan Carlos also said using Q/B as the catch rate is incorrect because it is a conversion per biomass ratio that might not scale linearly across fish ages/weights when just doing a single population model
 
@@ -1077,8 +1085,10 @@ plot(out_control) # this issue arose when the SGD contribution was modified from
 # changed settling rate from 0.8 to 0.05 -> this messed up the model to be unreasonable. Tried k_s = 0.1 still wasn't working. Instead returned k_s to 0.8 and changed k_r from 0.1 to 0.5, that also caused the model to crash. not terrible but fish population is going down. Try k_r 0.2 but that also seems problematic
 
 # have experimented some with increasing the initial fish density amount. Need to revisit that later
+
+# N1a = ammonium; N1n = nitrate; N2 = DON; N3 = PON; N4 = autotrophs; N5 = pelagic heterotrophic bacteria; N6 = pelagic heterotrophs; N7 = benthic autotrophs; N8 = benthic heterotrophs; N9_sed = sediment nitrogen accumulation 
 ```
-Before the control situatioin fails, nitrate in the fishpond is increasing at a steady clip and algae (N4) seems like it has been pretty stable
+Before the control situation fails, nitrate in the fishpond is increasing at a steady clip and algae (N4) seems like it has been pretty stable
 
 initial model is run for 1000 years but it only gets to ~115 years before the model stops running and starts getting NA values at 116.3336 years. NAN values are present for N1n_fp, N4_fp, and N7_fp these are all relatd to nitrate consumption and algae. Once those go NaN, they cause all the other values to go NaN in the following step because they're all interrelated
 
